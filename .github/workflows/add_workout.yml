@@ -1,4 +1,4 @@
-name: Dodaj Tygodniowy Plan do Garmina
+name: Dodaj Trening Biegowy
 
 on:
   workflow_dispatch:
