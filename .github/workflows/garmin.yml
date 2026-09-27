@@ -1,4 +1,4 @@
-name: Pobieranie Danych Garmin
+name: Pobieranie Danych Garmin (via Intervals)
 
 on:
   schedule:
@@ -20,12 +20,12 @@ jobs:
 
       - name: Instalacja bibliotek
         run: |
-          pip install garminconnect
+          pip install requests
 
       - name: Uruchomienie skryptu zbierającego dane
         env:
-          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
-          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          INTERVALS_ATHLETE_ID: ${{ secrets.INTERVALS_ATHLETE_ID }}
+          INTERVALS_API_KEY: ${{ secrets.INTERVALS_API_KEY }}
         run: |
           python garmin_collector.py
 
