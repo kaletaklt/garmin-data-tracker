@@ -16,6 +16,7 @@ GSPREAD_CREDENTIALS = os.environ.get("GSPREAD_CREDENTIALS")
 end_date = datetime.date.today()
 start_date = end_date - datetime.timedelta(days=DAYS_TO_FETCH - 1)
 
+# 1. Pobranie wydarzeń z zakresu dat
 activities_url = f"https://intervals.icu/api/v1/athlete/{ATHLETE_ID}/events?oldest={start_date.isoformat()}&newest={end_date.isoformat()}"
 act_res = requests.get(activities_url, auth=("API_KEY", API_KEY))
 
@@ -34,6 +35,7 @@ curr_date = start_date
 while curr_date <= end_date:
     date_str = curr_date.isoformat()
     
+    # Zapytanie Wellness
     well_url = f"https://intervals.icu/api/v1/athlete/{ATHLETE_ID}/wellness/{date_str}"
     well_res = requests.get(well_url, auth=("API_KEY", API_KEY))
     well_data = well_res.json() if well_res.status_code == 200 else {}
@@ -50,12 +52,41 @@ while curr_date <= end_date:
     avg_hr = round(sum(hrs) / len(hrs)) if hrs else None
     total_calories = sum([a.get("calories", 0) or 0 for a in day_acts]) if day_acts else 0
 
+    # Dociąganie szczegółowej dynamiki biegu dla pierwszej aktywności biegowej danego dnia
+    run_cadence = None
+    run_gct = None
+    run_balance = None
+    run_vert_osc = None
+    run_stride = None
+
+    for act in day_acts:
+        act_type = act.get("type", "")
+        if act_type in ["Run", "VirtualRun", "TrailRun"]:
+            act_id = act.get("id")
+            if act_id:
+                detail_url = f"https://intervals.icu/api/v1/activity/{act_id}"
+                det_res = requests.get(detail_url, auth=("API_KEY", API_KEY))
+                if det_res.status_code == 200:
+                    det = det_res.json()
+                    run_cadence = det.get("average_cadence")
+                    if run_cadence and run_cadence < 100:  # Korekta jeśli podano kadencję jednonożną
+                        run_cadence *= 2
+                    
+                    run_gct = det.get("avg_ground_contact_time") or det.get("ground_contact_time")
+                    run_balance = det.get("avg_left_right_balance") or det.get("left_right_balance")
+                    run_vert_osc = det.get("avg_vertical_oscillation") or det.get("vertical_oscillation")
+                    run_stride = det.get("avg_stride_length") or det.get("stride_length")
+                    if run_stride and run_stride > 10:  # Przeliczenie cm na metry w razie potrzeby
+                        run_stride = round(run_stride / 100, 2)
+            break
+
     ctl = well_data.get("ctl")
     atl = well_data.get("atl")
     tsb = round(ctl - atl, 2) if ctl is not None and atl is not None else None
 
     record = {
         "Data": date_str,
+        # WELLNESS
         "Tetno_Spoczynkowe": well_data.get("restingHR"),
         "HRV_SDNN": well_data.get("hrv"),
         "HRV_rMSSD": well_data.get("hrvRMSSD"),
@@ -71,6 +102,8 @@ while curr_date <= end_date:
         "Forma_Fitness_CTL": ctl,
         "Zmeczenie_Fatigue_ATL": atl,
         "Swiezosc_Form_TSB": tsb,
+        
+        # OGLÓNE O TRENINGACH
         "Trening_Liczba": len(day_acts),
         "Trening_Typy": act_types,
         "Trening_Nazwy": act_names,
@@ -78,12 +111,19 @@ while curr_date <= end_date:
         "Trening_Dystans_Km": total_distance_km,
         "Trening_Obciazenie_Load": total_load,
         "Trening_Srednie_HR": avg_hr,
-        "Trening_Kalorie": total_calories
+        "Trening_Kalorie": total_calories,
+
+        # DYNAMIKA BIEGU (RUNNING DYNAMICS)
+        "Bieg_Kadencja": run_cadence,
+        "Bieg_GCT_ms": run_gct,
+        "Bieg_Balans_LP": run_balance,
+        "Bieg_Odchylenie_Pionowe_mm": run_vert_osc,
+        "Bieg_Dlugosc_Kroku_m": run_stride
     }
     rows.append(record)
     curr_date += datetime.timedelta(days=1)
 
-# --- Zapis do pliku CSV ---
+# Zapis CSV
 file_exists = os.path.isfile("garmin_data.csv")
 fieldnames = rows[0].keys() if rows else []
 mode = "w" if (DAYS_TO_FETCH > 1 or not file_exists) else "a"
@@ -94,9 +134,9 @@ with open("garmin_data.csv", mode=mode, newline="", encoding="utf-8") as file:
         writer.writeheader()
     writer.writerows(rows)
 
-print(f"Zapisano CSV dla {len(rows)} dni.")
+print(f"Zapisano CSV z dynamiką biegu dla {len(rows)} dni.")
 
-# --- Zapis do Google Sheets ---
+# Zapis Google Sheets
 if GSPREAD_CREDENTIALS and GOOGLE_SHEET_ID:
     try:
         scopes = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -111,6 +151,9 @@ if GSPREAD_CREDENTIALS and GOOGLE_SHEET_ID:
             sheet.append_row(list(fieldnames))
             existing_dates = set()
         else:
+            # Aktualizujemy nagłówek jeśli doszły nowe kolumny
+            if len(existing_values[0]) < len(fieldnames):
+                sheet.update('A1', [list(fieldnames)])
             existing_dates = {row[0] for row in existing_values[1:] if row}
 
         new_rows_to_append = []
@@ -121,8 +164,8 @@ if GSPREAD_CREDENTIALS and GOOGLE_SHEET_ID:
 
         if new_rows_to_append:
             sheet.append_rows(new_rows_to_append)
-            print(f"Pomyślnie dodano {len(new_rows_to_append)} wierszy do Google Sheets.")
+            print(f"Dodano {len(new_rows_to_append)} wierszy do Google Sheets.")
         else:
-            print("Brak nowych wierszy do dopisania do Google Sheets.")
+            print("Brak nowych wierszy do wpisania.")
     except Exception as e:
-        print(f"Błąd zapisu do Google Sheets: {e}")
+        print(f"Błąd Google Sheets: {e}")
