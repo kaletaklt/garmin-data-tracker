@@ -5,6 +5,9 @@ import datetime
 import requests
 import gspread
 from google.oauth2.service_account import Credentials
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 ATHLETE_ID = os.environ.get("INTERVALS_ATHLETE_ID")
 API_KEY = os.environ.get("INTERVALS_API_KEY")
@@ -222,3 +225,71 @@ if GSPREAD_CREDENTIALS and GOOGLE_SHEET_ID:
             print("Brak nowych wierszy do wpisania.")
     except Exception as e:
         print(f"Błąd Google Sheets: {e}")
+
+# --- FUNKCJA SPRAWDZAJĄCA ALERTY I WYSYŁAJĄCA E-MAIL ---
+def check_and_send_alerts(record, prev_records=None):
+    sender = os.environ.get("EMAIL_SENDER")
+    password = os.environ.get("EMAIL_PASSWORD")
+    receiver = os.environ.get("EMAIL_RECEIVER")
+
+    if not (sender and password and receiver):
+        print("Brak danych konfiguracji e-mail w Secrets. Pomijam sprawdzanie alertów.")
+        return
+
+    alerts = []
+
+    # 1. Sprawdzanie TSB (Głębokie zmęczenie)
+    tsb = record.get("Swiezosc_Form_TSB")
+    if tsb is not None and tsb < -25:
+        alerts.append(f"⚠️ Bardzo niskie TSB (Świeżość): {tsb}. Wysokie ryzyko przetrenowania.")
+
+    # 2. Sprawdzanie Balansu L/P Biegu
+    balance_str = record.get("Bieg_Balans_LP")
+    if balance_str and "/" in str(balance_str):
+        try:
+            left_val = float(str(balance_str).split("/")[0].strip())
+            if left_val < 48.5 or left_val > 51.5:
+                alerts.append(f"⚠️ Zaburzona symetria biegu (Balans L/P): {balance_str}. Ryzyko mikrourazu/kompensacji.")
+        except ValueError:
+            pass
+
+    # 3. Sprawdzanie spadku HRV w stosunku do średniej z ostatnich dni
+    hrv = record.get("HRV_rMSSD")
+    if hrv and prev_records:
+        recent_hrvs = [r.get("HRV_rMSSD") for r in prev_records if r.get("HRV_rMSSD") is not None]
+        if len(recent_hrvs) >= 3:
+            avg_hrv = sum(recent_hrvs[-7:]) / len(recent_hrvs[-7:])
+            if hrv < avg_hrv * 0.85:
+                alerts.append(f"⚠️ Spadek HRV rMSSD: {hrv} ms (średnia 7-dniowa: {round(avg_hrv, 1)} ms). Słaba regeneracja.")
+
+    # 4. Sprawdzanie skoku Tętna Spoczynkowego
+    rhr = record.get("Tetno_Spoczynkowe")
+    if rhr and prev_records:
+        recent_rhrs = [r.get("Tetno_Spoczynkowe") for r in prev_records if r.get("Tetno_Spoczynkowe") is not None]
+        if len(recent_rhrs) >= 3:
+            avg_rhr = sum(recent_rhrs[-7:]) / len(recent_rhrs[-7:])
+            if rhr >= avg_rhr + 5:
+                alerts.append(f"⚠️ Podwyższone Tętno Spoczynkowe: {rhr} bpm (średnia 7-dniowa: {round(avg_rhr, 1)} bpm).")
+
+    # Jeśli wykryto przynajmniej jeden alert – wysyłamy wiadomość
+    if alerts:
+        subject = f"🚨 OSTRZEŻENIE TRENERSKIE - Garmin Alert [{record.get('Data')}]"
+        body = f"Cześć!\n\nWyryto niepokojące odchylenia w Twoich danych z dnia {record.get('Data')}:\n\n"
+        for alert in alerts:
+            body += f"- {alert}\n"
+        body += "\nZalecenie: Rozważ zmniejszenie intensywności dzisiejszego akcentu lub zmianę na lekki bieg tlenowy / regenerację.\n\nTwoja Automatyzacja Garmin"
+
+        msg = MIMEMultipart()
+        msg['From'] = sender
+        msg['To'] = receiver
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain', 'utf-8'))
+
+        try:
+            server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+            server.login(sender, password)
+            server.sendmail(sender, receiver, msg.as_string())
+            server.close()
+            print("Alert e-mail został pomyślnie wysłany!")
+        except Exception as e:
+            print(f"Błąd wysyłania wiadomości e-mail: {e}")
