@@ -26,6 +26,7 @@ jobs:
         env:
           INTERVALS_ATHLETE_ID: ${{ secrets.INTERVALS_ATHLETE_ID }}
           INTERVALS_API_KEY: ${{ secrets.INTERVALS_API_KEY }}
+          DAYS_TO_FETCH: '3650'
         run: |
           python garmin_collector.py
 
