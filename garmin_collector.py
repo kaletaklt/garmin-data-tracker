@@ -1,26 +1,28 @@
 import os
+import json
 import csv
 import datetime
 import requests
+import gspread
+from google.oauth2.service_account import Credentials
 
 ATHLETE_ID = os.environ.get("INTERVALS_ATHLETE_ID")
 API_KEY = os.environ.get("INTERVALS_API_KEY")
-
-# Domyślnie pobiera 1 dzień (dzisiaj). 
-# Zmienna DAYS_TO_FETCH pozwala pobrać historię wstecz (np. 365 dni).
 DAYS_TO_FETCH = int(os.environ.get("DAYS_TO_FETCH", 1))
+
+GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID")
+GSPREAD_CREDENTIALS = os.environ.get("GSPREAD_CREDENTIALS")
 
 end_date = datetime.date.today()
 start_date = end_date - datetime.timedelta(days=DAYS_TO_FETCH - 1)
 
-# 1. Pobranie wszystkich aktywności z podanego zakresu dat naraz
 activities_url = f"https://intervals.icu/api/v1/athlete/{ATHLETE_ID}/events?oldest={start_date.isoformat()}&newest={end_date.isoformat()}"
 act_res = requests.get(activities_url, auth=("API_KEY", API_KEY))
 
 activities_by_date = {}
 if act_res.status_code == 200:
     for act in act_res.json():
-        if act.get("type") != "Note":  # pomijamy zwykłe notatki w kalendarzu
+        if act.get("type") != "Note":
             act_date = act.get("start_date_local", "")[:10]
             if act_date not in activities_by_date:
                 activities_by_date[act_date] = []
@@ -29,16 +31,13 @@ if act_res.status_code == 200:
 rows = []
 curr_date = start_date
 
-# 2. Pętla po poszczególnych dniach z zakresu
 while curr_date <= end_date:
     date_str = curr_date.isoformat()
     
-    # Pobranie danych Wellness z danego dnia
     well_url = f"https://intervals.icu/api/v1/athlete/{ATHLETE_ID}/wellness/{date_str}"
     well_res = requests.get(well_url, auth=("API_KEY", API_KEY))
     well_data = well_res.json() if well_res.status_code == 200 else {}
     
-    # Aktywności z tego dnia
     day_acts = activities_by_date.get(date_str, [])
     
     act_names = ", ".join([a.get("name", "") for a in day_acts]) if day_acts else None
@@ -57,8 +56,6 @@ while curr_date <= end_date:
 
     record = {
         "Data": date_str,
-        
-        # REGENERACJA & OGÓLNE (WELLNESS)
         "Tetno_Spoczynkowe": well_data.get("restingHR"),
         "HRV_SDNN": well_data.get("hrv"),
         "HRV_rMSSD": well_data.get("hrvRMSSD"),
@@ -71,13 +68,9 @@ while curr_date <= end_date:
         "Waga_kg": well_data.get("weight"),
         "SpO2_Srednie": well_data.get("spO2"),
         "Kroki": well_data.get("steps"),
-        
-        # FORMA Z INTERVALS (FORM / FITNESS)
         "Forma_Fitness_CTL": ctl,
         "Zmeczenie_Fatigue_ATL": atl,
         "Swiezosc_Form_TSB": tsb,
-        
-        # TRENINGI & AKTYWNOŚCI
         "Trening_Liczba": len(day_acts),
         "Trening_Typy": act_types,
         "Trening_Nazwy": act_names,
@@ -90,11 +83,9 @@ while curr_date <= end_date:
     rows.append(record)
     curr_date += datetime.timedelta(days=1)
 
-# Zapis do pliku CSV
+# --- Zapis do pliku CSV ---
 file_exists = os.path.isfile("garmin_data.csv")
 fieldnames = rows[0].keys() if rows else []
-
-# Jeśli pobieramy 1 dzień, dopisujemy do istniejącego pliku. Jeśli pobieramy historię (>1 dnia), tworzymy/nadpisujemy kompletny plik.
 mode = "w" if (DAYS_TO_FETCH > 1 or not file_exists) else "a"
 
 with open("garmin_data.csv", mode=mode, newline="", encoding="utf-8") as file:
@@ -103,4 +94,35 @@ with open("garmin_data.csv", mode=mode, newline="", encoding="utf-8") as file:
         writer.writeheader()
     writer.writerows(rows)
 
-print(f"Pomyślnie pobrano i zapisano dane dla {len(rows)} dni.")
+print(f"Zapisano CSV dla {len(rows)} dni.")
+
+# --- Zapis do Google Sheets ---
+if GSPREAD_CREDENTIALS and GOOGLE_SHEET_ID:
+    try:
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+        creds_dict = json.loads(GSPREAD_CREDENTIALS)
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        client = gspread.authorize(creds)
+        sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
+
+        existing_values = sheet.get_all_values()
+        
+        if not existing_values:
+            sheet.append_row(list(fieldnames))
+            existing_dates = set()
+        else:
+            existing_dates = {row[0] for row in existing_values[1:] if row}
+
+        new_rows_to_append = []
+        for r in rows:
+            if r["Data"] not in existing_dates:
+                row_vals = [("" if v is None else v) for v in r.values()]
+                new_rows_to_append.append(row_vals)
+
+        if new_rows_to_append:
+            sheet.append_rows(new_rows_to_append)
+            print(f"Pomyślnie dodano {len(new_rows_to_append)} wierszy do Google Sheets.")
+        else:
+            print("Brak nowych wierszy do dopisania do Google Sheets.")
+    except Exception as e:
+        print(f"Błąd zapisu do Google Sheets: {e}")
