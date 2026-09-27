@@ -28,6 +28,7 @@ def check_and_send_alerts(record, prev_records=None):
         return
 
     alerts = []
+    alerts.append("🧪 TEST ALERT: Weryfikacja połączenia i powiadomień e-mail.")
 
     # 1. Sprawdzanie TSB (Głębokie zmęczenie)
     tsb = record.get("Swiezosc_Form_TSB")
