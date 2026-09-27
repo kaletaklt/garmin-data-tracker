@@ -2,8 +2,11 @@ name: Pobieranie Danych Garmin (via Intervals)
 
 on:
   schedule:
-    - cron: '0 6 * * *' # Odpala się codziennie o 6:00 UTC (7:00/8:00 czasu PL)
-  workflow_dispatch: # Umożliwia też ręczne uruchomienie przyciskiem
+    # 10:30 czasu polskiego (08:30 UTC) — idealnie po daily scrumie w tygodniu
+    - cron: '30 8 * * *'
+    # 13:00 czasu polskiego (11:00 UTC) — po późniejszej pobudce w weekend
+    - cron: '0 11 * * *'
+  workflow_dispatch: # Przycisk do ręcznego wywołania w dowolnym momencie
 
 jobs:
   run-garmin-script:
@@ -20,13 +23,14 @@ jobs:
 
       - name: Instalacja bibliotek
         run: |
-          pip install requests
+          pip install requests gspread google-auth
 
       - name: Uruchomienie skryptu zbierającego dane
         env:
           INTERVALS_ATHLETE_ID: ${{ secrets.INTERVALS_ATHLETE_ID }}
           INTERVALS_API_KEY: ${{ secrets.INTERVALS_API_KEY }}
-          DAYS_TO_FETCH: '3650'
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
         run: |
           python garmin_collector.py
 
