@@ -1,23 +1,15 @@
-name: Dodaj Trening do Garmina (via Intervals)
+name: Dodaj Tygodniowy Plan do Garmina
 
 on:
   workflow_dispatch:
     inputs:
-      workout_date:
-        description: 'Data treningu (format: YYYY-MM-DD)'
-        required: true
-        type: string
-      workout_name:
-        description: 'Nazwa treningu (np. Interwały 8x400m)'
-        required: true
-        type: string
-      workout_description:
-        description: 'Składnia treningu w formacie Intervals'
+      weekly_plan:
+        description: 'Wklej cały kod tygodniowy z czatu (JSON)'
         required: true
         type: string
 
 jobs:
-  upload-workout:
+  upload-workouts:
     runs-on: ubuntu-latest
 
     steps:
@@ -33,12 +25,10 @@ jobs:
         run: |
           pip install requests
 
-      - name: Wysyłanie treningu do Intervals
+      - name: Wysyłanie treningów do Intervals
         env:
           INTERVALS_ATHLETE_ID: ${{ secrets.INTERVALS_ATHLETE_ID }}
           INTERVALS_API_KEY: ${{ secrets.INTERVALS_API_KEY }}
-          WORKOUT_DATE: ${{ inputs.workout_date }}
-          WORKOUT_NAME: ${{ inputs.workout_name }}
-          WORKOUT_DESC: ${{ inputs.workout_description }}
+          WEEKLY_PLAN: ${{ inputs.weekly_plan }}
         run: |
-          python add_workout.py --date "$WORKOUT_DATE" --name "$WORKOUT_NAME" --desc "$WORKOUT_DESC"
+          python add_workout.py
