@@ -1,0 +1,38 @@
+name: Pobieranie Danych Garmin
+
+on:
+  schedule:
+    - cron: '0 6 * * *' # Odpala się codziennie o 6:00 UTC (7:00/8:00 czasu PL)
+  workflow_dispatch: # Umożliwia też ręczne uruchomienie przyciskiem
+
+jobs:
+  run-garmin-script:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Pobranie kodu repozytorium
+        uses: actions/checkout@v3
+
+      - name: Konfiguracja Pythona
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Instalacja bibliotek
+        run: |
+          pip install garminconnect
+
+      - name: Uruchomienie skryptu zbierającego dane
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+        run: |
+          python garmin_collector.py
+
+      - name: Zapisanie zmian w pliku CSV na GitHubie
+        run: |
+          git config --global user.name "Garmin Bot"
+          git config --global user.email "bot@github.com"
+          git add garmin_data.csv
+          git commit -m "Automatyczna aktualizacja danych Garmin [$(date +'%Y-%m-%d')]" || exit 0
+          git push
