@@ -1,34 +1,33 @@
-name: Dodaj Trening Biegowy
+name: Import Treningu (Intervals.icu / Garmin)
 
 on:
   workflow_dispatch:
     inputs:
-      weekly_plan:
-        description: 'Wklej cały kod tygodniowy z czatu (JSON)'
+      workout_json:
+        description: 'Kod treningu w formacie JSON'
         required: true
         type: string
 
 jobs:
-  upload-workouts:
+  upload:
     runs-on: ubuntu-latest
-
     steps:
       - name: Pobranie kodu repozytorium
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Konfiguracja Pythona
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.x'
 
-      - name: Instalacja bibliotek
+      - name: Instalacja zależności
         run: |
+          python -m pip install --upgrade pip
           pip install requests
 
-      - name: Wysyłanie treningów do Intervals
+      - name: Uruchomienie skryptu wgrywania
         env:
           INTERVALS_ATHLETE_ID: ${{ secrets.INTERVALS_ATHLETE_ID }}
           INTERVALS_API_KEY: ${{ secrets.INTERVALS_API_KEY }}
-          WEEKLY_PLAN: ${{ inputs.weekly_plan }}
-        run: |
-          python add_workout.py
+          WORKOUT_PLAN: ${{ inputs.workout_json }}
+        run: python add_workout.py
