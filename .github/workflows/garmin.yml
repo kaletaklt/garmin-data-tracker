@@ -1,12 +1,7 @@
 name: Pobieranie Danych Garmin (via Intervals)
 
 on:
-  schedule:
-    # 10:30 czasu polskiego (08:30 UTC) — idealnie po daily scrumie w tygodniu
-    - cron: '30 8 * * *'
-    # 13:00 czasu polskiego (11:00 UTC) — po późniejszej pobudce w weekend
-    - cron: '0 11 * * *'
-  workflow_dispatch: # Przycisk do ręcznego wywołania w dowolnym momencie
+  workflow_dispatch: # Wywoływanie ręczne / widżet z telefonu
 
 jobs:
   run-garmin-script:
@@ -14,33 +9,26 @@ jobs:
 
     steps:
       - name: Pobranie kodu repozytorium
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Konfiguracja Pythona
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.x'
 
-      - name: Instalacja bibliotek
+      - name: Instalacja zależności
         run: |
+          python -m pip install --upgrade pip
           pip install requests gspread google-auth
 
-      - name: Uruchomienie skryptu zbierającego dane
+      - name: Uruchomienie skryptu pobierania danych
         env:
           INTERVALS_ATHLETE_ID: ${{ secrets.INTERVALS_ATHLETE_ID }}
           INTERVALS_API_KEY: ${{ secrets.INTERVALS_API_KEY }}
+          DAYS_TO_FETCH: ${{ secrets.DAYS_TO_FETCH }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER }}
-        run: |
-          python garmin_collector.py
-
-      - name: Zapisanie zmian w pliku CSV na GitHubie
-        run: |
-          git config --global user.name "Garmin Bot"
-          git config --global user.email "bot@github.com"
-          git add garmin_data.csv
-          git commit -m "Automatyczna aktualizacja danych Garmin [$(date +'%Y-%m-%d')]" || exit 0
-          git push
+        run: python garmin_colletctor.py
