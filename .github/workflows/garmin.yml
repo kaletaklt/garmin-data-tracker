@@ -1,7 +1,7 @@
 name: Pobieranie Danych Garmin (via Intervals)
 
 on:
-  workflow_dispatch: # Wywoływanie ręczne / widżet z telefonu
+  workflow_dispatch:
 
 jobs:
   run-garmin-script:
@@ -25,7 +25,6 @@ jobs:
         env:
           INTERVALS_ATHLETE_ID: ${{ secrets.INTERVALS_ATHLETE_ID }}
           INTERVALS_API_KEY: ${{ secrets.INTERVALS_API_KEY }}
-          DAYS_TO_FETCH: ${{ secrets.DAYS_TO_FETCH }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
