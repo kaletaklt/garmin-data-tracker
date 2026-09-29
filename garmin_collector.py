@@ -11,7 +11,9 @@ from email.mime.multipart import MIMEMultipart
 
 ATHLETE_ID = os.environ.get("INTERVALS_ATHLETE_ID")
 API_KEY = os.environ.get("INTERVALS_API_KEY")
-DAYS_TO_FETCH = 1
+
+# Pobieramy 2 dni: wczoraj (dla zamknięcia i weryfikacji) oraz dzisiaj (dla bieżącej aktualizacji)
+DAYS_TO_FETCH = 2
 
 GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID")
 GSPREAD_CREDENTIALS = os.environ.get("GSPREAD_CREDENTIALS")
@@ -118,6 +120,10 @@ while curr_date <= end_date:
     atl = well_data.get("atl")
     tsb = round(ctl - atl, 2) if ctl is not None and atl is not None else None
 
+    # Obsługa czasu snu
+    sleep_secs = well_data.get("sleepSecs")
+    sleep_hours = round(sleep_secs / 3600, 2) if sleep_secs else None
+
     record = {
         "Data": date_str,
         
@@ -125,19 +131,19 @@ while curr_date <= end_date:
         "Tetno_Spoczynkowe": well_data.get("restingHR"),
         "HRV_SDNN": well_data.get("hrv"),
         "HRV_rMSSD": well_data.get("hrvRMSSD"),
-        "Sen_Wynik": well_data.get("sleepScore"),
-        "Sen_Godziny": round(well_data.get("sleepSecs", 0) / 3600, 2) if well_data.get("sleepSecs") else None,
-        "Sen_Gleboki_Min": round((well_data.get("deepSleepSecs") or 0) / 60) if well_data.get("deepSleepSecs") else None,
-        "Sen_Lekki_Min": round((well_data.get("lightSleepSecs") or 0) / 60) if well_data.get("lightSleepSecs") else None,
-        "Sen_REM_Min": round((well_data.get("remSleepSecs") or 0) / 60) if well_data.get("remSleepSecs") else None,
-        "Sen_Czuwanie_Min": round((well_data.get("awakeSleepSecs") or 0) / 60) if well_data.get("awakeSleepSecs") else None,
+        "Sen_Wynik": well_data.get("sleepScore") or well_data.get("sleepQuality"),
+        "Sen_Godziny": sleep_hours,
+        "Sen_Gleboki_Min": round((well_data.get("deepSleepSecs") or 0) / 60) if well_data.get("deepSleepSecs") else 0,
+        "Sen_Lekki_Min": round((well_data.get("lightSleepSecs") or 0) / 60) if well_data.get("lightSleepSecs") else 0,
+        "Sen_REM_Min": round((well_data.get("remSleepSecs") or 0) / 60) if well_data.get("remSleepSecs") else 0,
+        "Sen_Czuwanie_Min": round((well_data.get("awakeSleepSecs") or 0) / 60) if well_data.get("awakeSleepSecs") else 0,
         "Oddech_Noc_rpm": well_data.get("respiration"),
         "BodyBattery": well_data.get("bodyBattery"),
         "Stres_Sredni": well_data.get("avgStress"),
         "Waga_kg": well_data.get("weight"),
         "SpO2_Srednie": well_data.get("spO2"),
-        "Kroki": well_data.get("steps"),
-        "Kalorie_Aktywne": well_data.get("activeCalories") or well_data.get("kcalConsumed"),
+        "Kroki": well_data.get("steps") if well_data.get("steps") is not None else 0,
+        "Kalorie_Aktywne": well_data.get("activeCalories") or well_data.get("kcalConsumed") or 0,
         "VO2Max": well_data.get("vo2max"),
 
         # --- MODEL FORMY & ZMĘCZENIA (INTERVALS) ---
@@ -161,11 +167,11 @@ while curr_date <= end_date:
         "Przewyszenia_Dol_m": total_elev_loss,
 
         # --- STREFY TĘTNA (MINUTY) ---
-        "Strefa_HR_Z1_Min": hr_z1 if hr_z1 > 0 else None,
-        "Strefa_HR_Z2_Min": hr_z2 if hr_z2 > 0 else None,
-        "Strefa_HR_Z3_Min": hr_z3 if hr_z3 > 0 else None,
-        "Strefa_HR_Z4_Min": hr_z4 if hr_z4 > 0 else None,
-        "Strefa_HR_Z5_Min": hr_z5 if hr_z5 > 0 else None,
+        "Strefa_HR_Z1_Min": hr_z1,
+        "Strefa_HR_Z2_Min": hr_z2,
+        "Strefa_HR_Z3_Min": hr_z3,
+        "Strefa_HR_Z4_Min": hr_z4,
+        "Strefa_HR_Z5_Min": hr_z5,
 
         # --- DYNAMIKA BIEGU I MOC ---
         "Bieg_Moc_Srednia_W": run_power_avg,
@@ -192,12 +198,10 @@ def check_and_send_alerts(record, prev_records=None):
 
     alerts = []
     
-    # 1. Sprawdzanie TSB (Głębokie zmęczenie)
     tsb = record.get("Swiezosc_Form_TSB")
     if tsb is not None and tsb < -25:
         alerts.append(f"⚠️ Bardzo niskie TSB (Świeżość): {tsb}. Wysokie ryzyko przetrenowania.")
 
-    # 2. Sprawdzanie Balansu L/P Biegu
     balance_str = record.get("Bieg_Balans_LP")
     if balance_str and "/" in str(balance_str):
         try:
@@ -207,7 +211,6 @@ def check_and_send_alerts(record, prev_records=None):
         except ValueError:
             pass
 
-    # 3. Sprawdzanie spadku HRV w stosunku do średniej z ostatnich dni
     hrv = record.get("HRV_rMSSD")
     if hrv and prev_records:
         recent_hrvs = [r.get("HRV_rMSSD") for r in prev_records if r.get("HRV_rMSSD") is not None]
@@ -216,7 +219,6 @@ def check_and_send_alerts(record, prev_records=None):
             if hrv < avg_hrv * 0.85:
                 alerts.append(f"⚠️ Spadek HRV rMSSD: {hrv} ms (średnia 7-dniowa: {round(avg_hrv, 1)} ms). Słaba regeneracja.")
 
-    # 4. Sprawdzanie skoku Tętna Spoczynkowego
     rhr = record.get("Tetno_Spoczynkowe")
     if rhr and prev_records:
         recent_rhrs = [r.get("Tetno_Spoczynkowe") for r in prev_records if r.get("Tetno_Spoczynkowe") is not None]
@@ -225,7 +227,6 @@ def check_and_send_alerts(record, prev_records=None):
             if rhr >= avg_rhr + 5:
                 alerts.append(f"⚠️ Podwyższone Tętno Spoczynkowe: {rhr} bpm (średnia 7-dniowa: {round(avg_rhr, 1)} bpm).")
 
-    # Jeśli wykryto przynajmniej jeden alert – wysyłamy wiadomość
     if alerts:
         subject = f"🚨 OSTRZEŻENIE TRENERSKIE - Garmin Alert [{record.get('Data')}]"
         body = f"Cześć!\n\nWykryto niepokojące odchylenia w Twoich danych z dnia {record.get('Data')}:\n\n"
@@ -248,24 +249,38 @@ def check_and_send_alerts(record, prev_records=None):
         except Exception as e:
             print(f"Błąd wysyłania wiadomości e-mail: {e}")
 
-# Wywołanie alertu dla najnowszego rekordu
+# Sprawdzamy alert dla najnowszego rekordu (dzisiejszego)
 if rows:
     check_and_send_alerts(rows[-1], rows[:-1])
 
-# --- ZAPIS CSV ---
-file_exists = os.path.isfile("garmin_data.csv")
-fieldnames = rows[0].keys() if rows else []
-mode = "w" if (DAYS_TO_FETCH > 1 or not file_exists) else "a"
+# --- ZAPIS / AKTUALIZACJA CSV (UPSERT DLA WCZORAJ I DZIŚ) ---
+csv_file = "garmin_data.csv"
+existing_csv_data = {}
+fieldnames = list(rows[0].keys()) if rows else []
 
-with open("garmin_data.csv", mode=mode, newline="", encoding="utf-8") as file:
-    writer = csv.DictWriter(file, fieldnames=fieldnames)
-    if mode == "w":
-        writer.writeheader()
-    writer.writerows(rows)
+if os.path.isfile(csv_file):
+    with open(csv_file, mode="r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames:
+            fieldnames = reader.fieldnames
+        for row in reader:
+            if row.get("Data"):
+                existing_csv_data[row["Data"]] = row
 
-print(f"Zapisano CSV z kompletnym pakietem danych dla {len(rows)} dni.")
+for r in rows:
+    cleaned_row = {k: ("" if v is None else v) for k, v in r.items()}
+    existing_csv_data[r["Data"]] = cleaned_row
 
-# --- ZAPIS GOOGLE SHEETS ---
+sorted_dates = sorted(existing_csv_data.keys())
+with open(csv_file, mode="w", newline="", encoding="utf-8") as f:
+    writer = csv.DictWriter(f, fieldnames=fieldnames)
+    writer.writeheader()
+    for d in sorted_dates:
+        writer.writerow(existing_csv_data[d])
+
+print(f"Zaktualizowano plik CSV dla ostatnich {len(rows)} dni.")
+
+# --- ZAPIS / AKTUALIZACJA GOOGLE SHEETS (UPSERT DLA WCZORAJ I DZIŚ) ---
 if GSPREAD_CREDENTIALS and GOOGLE_SHEET_ID:
     try:
         scopes = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -278,22 +293,23 @@ if GSPREAD_CREDENTIALS and GOOGLE_SHEET_ID:
         
         if not existing_values:
             sheet.append_row(list(fieldnames))
-            existing_dates = set()
+            existing_dates_map = {}
         else:
             if len(existing_values[0]) < len(fieldnames):
                 sheet.update('A1', [list(fieldnames)])
-            existing_dates = {row[0] for row in existing_values[1:] if row}
+            existing_dates_map = {row[0]: idx + 1 for idx, row in enumerate(existing_values) if row}
 
-        new_rows_to_append = []
         for r in rows:
-            if r["Data"] not in existing_dates:
-                row_vals = [("" if v is None else v) for v in r.values()]
-                new_rows_to_append.append(row_vals)
+            date_key = r["Data"]
+            row_vals = [("" if v is None else v) for v in r.values()]
+            
+            if date_key in existing_dates_map:
+                row_idx = existing_dates_map[date_key]
+                sheet.update(f"A{row_idx}", [row_vals])
+                print(f"Zaktualizowano wiersz {row_idx} w Google Sheets dla daty {date_key}.")
+            else:
+                sheet.append_row(row_vals)
+                print(f"Dodano nowy wiersz w Google Sheets dla daty {date_key}.")
 
-        if new_rows_to_append:
-            sheet.append_rows(new_rows_to_append)
-            print(f"Dodano {len(new_rows_to_append)} wierszy do Google Sheets.")
-        else:
-            print("Brak nowych wierszy do wpisania.")
     except Exception as e:
         print(f"Błąd Google Sheets: {e}")
