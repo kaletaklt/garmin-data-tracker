@@ -20,7 +20,7 @@ def collect_activities():
         # Garmin inaczej nazywa balans dla biegu (GroundContactBalance) i roweru (LeftBalance)
         balance = act.get("avgLeftGroundContactBalance") or act.get("avgLeftBalance")
         if balance:
-            balance = round(balance, 1)
+            balance = round(balance, 2)
         
 record = {
             "ID_Aktywnosci": str(act_id),
@@ -43,7 +43,7 @@ record = {
             "Dlugosc_Kroku_m": round((act.get("avgStrideLength") or 0) / 100, 2) if act.get("avgStrideLength") else None,
             "Czas_Kontaktu_z_Podlozem_ms": act.get("avgGroundContactTime"),
             "Odchylenie_Pionowe_mm": round((act.get("avgVerticalOscillation") or 0) * 10, 1) if act.get("avgVerticalOscillation") else None,
-            "Balans_L_P": act.get("balance"),
+            "Balans_L_P": balance
             "Srednia_Moc_W": act.get("avgPower") or act.get("averagePower"),
             "Znormalizowana_Moc_W": act.get("normPower") or act.get("normalizedPower"),
             "VO2_Max_Treningu": act.get("vO2MaxValue"),
