@@ -19,6 +19,6 @@ jobs:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
         run: |
-          python 1_garmin_auth.py
-          python 3_activity_collector.py
-          python 4_gsheets_updater.py
+          python garmin_auth.py
+          python activity_collector.py
+          python gsheets_updater.py
