@@ -1,0 +1,24 @@
+name: 2. Raport Po Treningu (Aktywności)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  activity-flow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: pip install gspread google-auth garminconnect
+      - name: Flow Treningowy
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
+        run: |
+          python 1_garmin_auth.py
+          python 3_activity_collector.py
+          python 4_gsheets_updater.py
