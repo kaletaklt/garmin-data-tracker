@@ -10,19 +10,25 @@ def collect_activities():
     end_date = datetime.date.today()
     start_date = end_date - datetime.timedelta(days=7)
     
-    activities = client.get_activities_by_date(start_date.isoformat(), end_date.isoformat(), "")
+    print(f"Pobieranie aktywności od {start_date} do {end_date}...")
+    activities_summary = client.get_activities_by_date(start_date.isoformat(), end_date.isoformat(), "")
     rows = []
     
-    for act in activities:
-        act_id = act.get("activityId")
+    for summary in activities_summary:
+        act_id = summary.get("activityId")
         if not act_id: continue
         
-        # Garmin inaczej nazywa balans dla biegu (GroundContactBalance) i roweru (LeftBalance)
+        # Pobieramy PEŁNE, surowe dane dla konkretnej aktywności
+        try:
+            act = client.get_activity(act_id)
+        except Exception:
+            act = summary # W razie błędu awaryjnie używamy podsumowania
+
         balance = act.get("avgLeftGroundContactBalance") or act.get("avgLeftBalance")
         if balance:
-            balance = round(balance, 2)
+            balance = round(balance, 1)
         
-record = {
+        record = {
             "ID_Aktywnosci": str(act_id),
             "Data": act.get("startTimeLocal", "")[:10],
             "Godzina": act.get("startTimeLocal", "")[11:16],
@@ -35,7 +41,7 @@ record = {
             "Max_HR": act.get("maxHR"),
             "Efekt_Tlenowy": act.get("aerobicTrainingEffect"),
             "Efekt_Beztlenowy": act.get("anaerobicTrainingEffect"),
-            "Obciazenie_Treningowe_Load": act.get("activityTrainingLoad") or act.get("trainingLoad"),
+            "Obciazenie_Treningowe_Load": act.get("activityTrainingLoad") or act.get("trainingLoad") or summary.get("trainingLoad"),
             "Kalorie": act.get("calories"),
             "Przewyzszenia_W_Gore_m": act.get("elevationGain"),
             "Przewyzszenia_W_Dol_m": act.get("elevationLoss"),
@@ -43,7 +49,7 @@ record = {
             "Dlugosc_Kroku_m": round((act.get("avgStrideLength") or 0) / 100, 2) if act.get("avgStrideLength") else None,
             "Czas_Kontaktu_z_Podlozem_ms": act.get("avgGroundContactTime"),
             "Odchylenie_Pionowe_mm": round((act.get("avgVerticalOscillation") or 0) * 10, 1) if act.get("avgVerticalOscillation") else None,
-            "Balans_L_P": balance
+            "Balans_L_P": balance,
             "Srednia_Moc_W": act.get("avgPower") or act.get("averagePower"),
             "Znormalizowana_Moc_W": act.get("normPower") or act.get("normalizedPower"),
             "VO2_Max_Treningu": act.get("vO2MaxValue"),
