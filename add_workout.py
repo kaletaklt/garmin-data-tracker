@@ -1,92 +1,110 @@
-import json
 import os
 import sys
-import requests
+import json
+from garminconnect import Garmin
 
-# Pobieranie sekretów/zmiennych środowiskowych
-ATHLETE_ID = os.environ.get("INTERVALS_ATHLETE_ID")
-API_KEY = os.environ.get("INTERVALS_API_KEY")
+def parse_simple_text_to_garmin_workout(text_input):
+    """
+    Tłumaczy prosty tekst z pop-upu na strukturę wymaganą przez Garmin API.
+    Oczekiwany format wejściowy:
+    YYYY-MM-DD
+    Nazwa Treningu
+    - dystans_w_km strefa_hr (np. - 1.5km <133bpm)
+    ...
+    """
+    lines = [line.strip() for line in text_input.strip().split('\n') if line.strip()]
+    if len(lines) < 3:
+        raise ValueError("Za mało linii w opisie treningu. Wymagane: Data, Nazwa, Kroki.")
 
-
-def add_workout_to_intervals(workout_json_str):
-  if not ATHLETE_ID or not API_KEY:
-    print(
-        "❌ Błąd: Brak INTERVALS_ATHLETE_ID lub INTERVALS_API_KEY w"
-        " sekretach/zmiennych środowiskowych."
-    )
-    sys.exit(1)
-
-  # 1. Parsowanie wejścia JSON
-  try:
-    parsed_data = json.loads(workout_json_str)
-  except json.JSONDecodeError as e:
-    print(f"❌ Błąd parsowania formatu JSON: {e}")
-    sys.exit(1)
-
-  # Obsługa pojedynczego obiektu dict {} lub listy [{}]
-  if isinstance(parsed_data, list):
-    if not parsed_data:
-      print("⚠️ Przekazana lista treningów jest pusta.")
-      return
-    workouts = parsed_data
-  elif isinstance(parsed_data, dict):
-    workouts = [parsed_data]
-  else:
-    print("❌ Niepoprawny format danych (oczekiwano obiektu JSON lub listy).")
-    sys.exit(1)
-
-  url = f"https://intervals.icu/api/v1/athlete/{ATHLETE_ID}/events"
-
-  # 2. Wysyłanie treningu do Intervals.icu
-  for w in workouts:
-    date_str = w.get("date")
-    name = w.get("name")
-    description = w.get("desc") or w.get("description", "")
-    workout_type = w.get("type", "Run")  # Run, WeightTraining, Swim, Ride itp.
-    start_time = w.get("time", "07:00:00")  # Domyślna godzina w kalendarzu
-
-    if not date_str or not name:
-      print("❌ Błąd: Trening musi zawierać pola 'date' oraz 'name'.")
-      continue
-
-    # Format ISO: YYYY-MM-DDTHH:MM:SS
-    start_date_local = (
-        f"{date_str}T{start_time}" if "T" not in date_str else date_str
-    )
-
-    payload = {
-        "category": "WORKOUT",
-        "start_date_local": start_date_local,
-        "type": workout_type,
-        "name": name,
-        "description": description,
+    date_str = lines[0]
+    workout_name = lines[1]
+    
+    # Podstawowa struktura treningu w Garmin API
+    workout_dict = {
+        "workoutName": workout_name,
+        "sport": "RUNNING",
+        "workoutSegments": [
+            {
+                "segmentOrder": 1,
+                "sport": "RUNNING",
+                "workoutSteps": []
+            }
+        ]
     }
 
+    step_order = 1
+    for line in lines[2:]:
+        if line.startswith("-"):
+            # Proste parsowanie, np: "- 1.5km <133bpm"
+            parts = line[1:].strip().split()
+            if len(parts) >= 2:
+                dist_str = parts[0].replace("km", "")
+                target_str = parts[1]
+                
+                try:
+                    distance_meters = int(float(dist_str) * 1000)
+                except ValueError:
+                    continue # Pomijamy nieprawidłowe linie
+
+                # Zbudowanie kroku treningowego (Workout Step)
+                step = {
+                    "type": "ExecutableStepDTO",
+                    "stepId": None,
+                    "stepOrder": step_order,
+                    "childStepId": None,
+                    "description": target_str,
+                    "stepType": {
+                        "stepTypeId": 3, # 3 = Active (aktywny krok)
+                        "stepTypeKey": "interval" 
+                    },
+                    "endCondition": {
+                        "conditionTypeId": 3, # 3 = dystans
+                        "conditionTypeKey": "distance"
+                    },
+                    "endConditionValue": distance_meters,
+                    # Tutaj opcjonalnie można dodać targetTypeId dla konkretnych stref tętna, 
+                    # ale dla uproszczenia wrzucamy to na razie w opis kroku
+                }
+                workout_dict["workoutSegments"][0]["workoutSteps"].append(step)
+                step_order += 1
+
+    return workout_dict, date_str
+
+def add_workout_to_garmin(workout_text):
+    email = os.environ.get("GARMIN_EMAIL")
+    password = os.environ.get("GARMIN_PASSWORD")
+
+    if not email or not password:
+         print("❌ Błąd: Brak GARMIN_EMAIL lub GARMIN_PASSWORD w sekretach/zmiennych środowiskowych.")
+         sys.exit(1)
+
     try:
-      response = requests.post(
-          url, auth=("API_KEY", API_KEY), json=payload, timeout=10
-      )
+        # Autoryzacja i użycie zapisanej sesji
+        client = Garmin(email, password)
+        client.login(".") 
+        print("✅ Pomyślnie zalogowano do serwerów Garmin Connect.")
+        
+        # Przetłumaczenie tekstu na strukturę Garmina
+        workout_dict, date_str = parse_simple_text_to_garmin_workout(workout_text)
+        
+        # 1. Zapisanie struktury jako trening w Garmin Connect
+        saved_workout = client.save_workout(workout_dict)
+        workout_id = saved_workout.get("workoutId")
+        print(f"✅ Utworzono trening w Garmin Connect. (ID: {workout_id})")
 
-      if response.status_code in [200, 201]:
-        res_data = response.json()
-        event_id = res_data.get("id", "N/A")
-        print(f"✅ Dodano trening do Intervals.icu!")
-        print(f"   📅 Data: {date_str} ({start_time})")
-        print(f"   🏃 Nazwa: {name}")
-        print(f"   🏷️ Typ: {workout_type}")
-        print(f"   🆔 ID Zdarzenia: {event_id}")
-      else:
-        print(
-            f"❌ Błąd API Intervals [{response.status_code}]: {response.text}"
-        )
+        # 2. Przypisanie zapisanego treningu do konkretnego dnia w kalendarzu
+        client.schedule_workout(workout_id, date_str)
+        print(f"✅ Przypisano trening do kalendarza na dzień: {date_str}")
 
-    except requests.RequestException as e:
-      print(f"❌ Błąd połączenia z API: {e}")
-
+    except Exception as e:
+         print(f"❌ Wystąpił błąd podczas dodawania treningu do Garmina: {e}")
+         sys.exit(1)
 
 if __name__ == "__main__":
-  # Priorytetowo szuka zmiennej WORKOUT_PLAN, ew. WEEKLY_PLAN
-  raw_input = os.environ.get("WORKOUT_PLAN") or os.environ.get(
-      "WEEKLY_PLAN", "{}"
-  )
-  add_workout_to_intervals(raw_input)
+    # Odbiór danych z aplikacji HTTP Shortcuts (pop-up)
+    raw_input = os.environ.get("WORKOUT_PLAN", "")
+    if not raw_input:
+         print("Brak danych treningowych na wejściu.")
+         sys.exit(1)
+         
+    add_workout_to_garmin(raw_input)
