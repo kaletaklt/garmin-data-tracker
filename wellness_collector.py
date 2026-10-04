@@ -4,8 +4,9 @@ import datetime
 from garminconnect import Garmin
 
 def collect_wellness():
-    client = Garmin(os.environ.get("GARMIN_EMAIL"), os.environ.get("GARMIN_PASSWORD"), session_data_dir=".")
-    client.login()
+    # Konstruktor bez session_data_dir
+    client = Garmin(os.environ.get("GARMIN_EMAIL"), os.environ.get("GARMIN_PASSWORD"))
+    client.login(".") # Wczytanie z bieżącego katalogu
 
     end_date = datetime.date.today()
     start_date = end_date - datetime.timedelta(days=1)
