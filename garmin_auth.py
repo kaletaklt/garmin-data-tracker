@@ -10,8 +10,9 @@ def login():
         exit(1)
 
     try:
-        client = Garmin(email, password, session_data_dir=".")
-        client.login()
+        # Argument przeniesiony do metody login()
+        client = Garmin(email, password)
+        client.login(".")
         print("Zalogowano do Garmin Connect.")
     except Exception as e:
         print(f"Błąd logowania: {e}")
