@@ -17,6 +17,13 @@ def collect_wellness():
         stats = client.get_stats(date_str) or {}
         sleep = client.get_sleep_data(date_str) or {}
         hrv = client.get_hrv_data(date_str) or {}
+        
+        # Bezpośrednie strzały po ukryte dane
+        try:
+            resp_data = client.get_respiration_data(date_str) or {}
+            sleep_resp = resp_data.get("sleepAvgValue")
+        except Exception:
+            sleep_resp = None
 
         ds = sleep.get('dailySleepDTO', {})
         
@@ -34,17 +41,12 @@ def collect_wellness():
             "Sen_Czuwanie_Min": round((ds.get('awakeSleepSeconds') or 0) / 60) or None,
             "SpO2_Srednie": stats.get('averageSpO2'),
             "SpO2_Min": stats.get('lowestSpO2'),
-            "Oddech_Noc_Sredni": stats.get('sleepingRespiration') or stats.get('averageRespirationValue') or stats.get('averageRespiration'),
+            "Oddech_Noc_Sredni": sleep_resp or stats.get('sleepingRespiration') or stats.get('averageRespirationValue'),
             "BodyBattery_Max": stats.get('bodyBatteryHighestValue') or stats.get('highestBodyBatteryValue') or stats.get('maxBodyBattery'),
             "BodyBattery_Min": stats.get('bodyBatteryLowestValue') or stats.get('lowestBodyBatteryValue') or stats.get('minBodyBattery'),
             "Stres_Sredni": stats.get('averageStressLevel'),
-            "Stres_Czas_Odpoczynku_Min": round((stats.get('restStressDuration') or 0) / 60) or None,
-            "Stres_Czas_Wysokiego_Min": round((stats.get('highStressDuration') or 0) / 60) or None,
             "Kroki": stats.get('totalSteps', 0),
-            "Piętra_W_Gore": stats.get('floorsAscended', 0),
-            "Kalorie_Aktywne": stats.get('activeKilocalories', 0),
-            "Kalorie_Spoczynkowe": stats.get('bmrKilocalories', 0),
-            "Minuty_Intensywne": stats.get('vigorousIntensityMinutes', 0)
+            "Kalorie_Aktywne": stats.get('activeKilocalories', 0)
         }
         rows.append(record)
         curr_date += datetime.timedelta(days=1)
