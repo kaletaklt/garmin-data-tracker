@@ -5,16 +5,12 @@ import datetime
 import requests
 import gspread
 from google.oauth2.service_account import Credentials
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 ATHLETE_ID = os.environ.get("INTERVALS_ATHLETE_ID")
 API_KEY = os.environ.get("INTERVALS_API_KEY")
-DAYS_TO_FETCH = 7 
-
 GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID")
 GSPREAD_CREDENTIALS = os.environ.get("GSPREAD_CREDENTIALS")
+DAYS_TO_FETCH = 7 
 
 end_date = datetime.date.today()
 start_date = end_date - datetime.timedelta(days=DAYS_TO_FETCH)
@@ -53,47 +49,15 @@ if act_res.status_code == 200:
             "Max_HR": act.get("max_heartrate"),
             "Kalorie": act.get("calories"),
             "Przewyzszenia_W_Gore_m": act.get("total_elevation_gain"),
-            "Przewyzszenia_W_Dol_m": act.get("total_elevation_loss"),
             
             "Strefa_Z1_Min": z1, "Strefa_Z2_Min": z2, "Strefa_Z3_Min": z3, "Strefa_Z4_Min": z4, "Strefa_Z5_Min": z5,
             
-            "Srednia_Moc_W": det.get("icu_average_watts") or det.get("average_watts"),
-            "Moc_NP_W": det.get("icu_weighted_avg_watts"),
             "Kadencja_Srednia": det.get("average_cadence") * 2 if det.get("average_cadence") and det.get("average_cadence") < 100 else det.get("average_cadence"),
             "Balans_L_P": det.get("avg_left_right_balance") or det.get("left_right_balance"),
             "Czas_Kontaktu_GCT_ms": det.get("avg_ground_contact_time") or det.get("ground_contact_time"),
-            "Odchylenie_Pionowe_mm": det.get("avg_vertical_oscillation") or det.get("vertical_oscillation"),
-            "Dlugosc_Kroku_m": round(det.get("avg_stride_length") / 100, 2) if det.get("avg_stride_length") and det.get("avg_stride_length") > 10 else det.get("avg_stride_length"),
-            "Temperatura_C": det.get("average_temp")
+            "Dlugosc_Kroku_m": round(det.get("avg_stride_length") / 100, 2) if det.get("avg_stride_length") and det.get("avg_stride_length") > 10 else det.get("avg_stride_length")
         }
         rows.append(record)
-
-def check_activity_alerts(record):
-    sender, password, receiver = os.environ.get("EMAIL_SENDER"), os.environ.get("EMAIL_PASSWORD"), os.environ.get("EMAIL_RECEIVER")
-    if not (sender and password and receiver): return
-
-    alerts = []
-    balance_str = record.get("Balans_L_P")
-    if balance_str and "/" in str(balance_str):
-        try:
-            left_val = float(str(balance_str).split("/")[0].strip())
-            if left_val < 48.5 or left_val > 51.5:
-                alerts.append(f"⚠️ Zaburzona symetria biegu (Balans L/P): {balance_str}. Wskazuje to na znaczne odciążanie prawego uda/biodra.")
-        except ValueError: pass
-
-    if alerts:
-        msg = MIMEMultipart()
-        msg['From'], msg['To'], msg['Subject'] = sender, receiver, f"🚨 ALERT BIOMECHANICZNY - {record.get('Nazwa')}"
-        body = f"Podczas ostatniego treningu ({record.get('Data')}) wystąpiły odchylenia w technice:\n\n" + "\n".join([f"- {a}" for a in alerts])
-        msg.attach(MIMEText(body, 'plain', 'utf-8'))
-        try:
-            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-                server.login(sender, password)
-                server.sendmail(sender, receiver, msg.as_string())
-        except Exception as e: print(e)
-
-if rows:
-    check_activity_alerts(rows[-1]) 
 
 csv_file = "activities_data.csv"
 existing_data = {}
@@ -105,10 +69,11 @@ if os.path.isfile(csv_file):
         for row in reader: existing_data[row["ID_Aktywnosci"]] = row
 
 for r in rows: existing_data[r["ID_Aktywnosci"]] = {k: ("" if v is None else v) for k, v in r.items()}
-with open(csv_file, mode="w", newline="", encoding="utf-8") as f:
-    writer = csv.DictWriter(f, fieldnames=fieldnames)
-    writer.writeheader()
-    for d in sorted(existing_data.keys(), key=lambda k: existing_data[k]["Data"]): writer.writerow(existing_data[d])
+if existing_data:
+    with open(csv_file, mode="w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for d in sorted(existing_data.keys(), key=lambda k: existing_data[k]["Data"]): writer.writerow(existing_data[d])
 
 if GSPREAD_CREDENTIALS and GOOGLE_SHEET_ID and rows:
     try:
