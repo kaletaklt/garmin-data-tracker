@@ -6,20 +6,29 @@ from garminconnect import Garmin
 DAYS_TO_FETCH = 10
 
 
-def safe_nested_get(d, *keys, default=None):
-  """Bezpiecznie wyciąga wartości z głęboko zagnieżdżonych słowników."""
-  curr = d
-  for k in keys:
-    if not isinstance(curr, dict):
-      return default
-    curr = curr.get(k)
-    if curr is None:
-      return default
-  return curr
+def extract_val(
+    d, summary=None, *keys, nested_dicts=('summaryDTO', 'metadataDTO')
+):
+  """Przeszukuje powierzchowne oraz głębokie struktury (summaryDTO) szczegółów aktywności."""
+  if isinstance(d, dict):
+    for k in keys:
+      if d.get(k) is not None:
+        return d.get(k)
+    for n_key in nested_dicts:
+      sub = d.get(n_key)
+      if isinstance(sub, dict):
+        for k in keys:
+          if sub.get(k) is not None:
+            return sub.get(k)
+  if isinstance(summary, dict):
+    for k in keys:
+      if summary.get(k) is not None:
+        return summary.get(k)
+  return None
 
 
 def safe_num(val, scale=1.0, divisor=1.0, round_digits=2):
-  """Bezpieczne przeliczanie wartości numerycznych z ochroną przed None."""
+  """Bezpieczne dzielenie i zaokrąglanie wartości numerycznych."""
   if isinstance(val, (int, float)) and val > 0:
     res = (val / divisor) * scale
     return round(res, round_digits) if round_digits is not None else res
@@ -75,48 +84,89 @@ def collect_activities():
     if not isinstance(act, dict):
       act = summary if isinstance(summary, dict) else {}
 
-    balance = act.get('avgLeftGroundContactBalance') or act.get('avgLeftBalance')
+    balance = extract_val(
+        act,
+        summary,
+        'avgLeftGroundContactBalance',
+        'avgLeftBalance',
+        'leftBalance',
+    )
     if isinstance(balance, (int, float)):
       balance = round(balance, 1)
     else:
       balance = None
 
+    start_time_local = extract_val(act, summary, 'startTimeLocal') or ''
+
     record = {
         'ID_Aktywnosci': str(act_id),
-        'Data': str(act.get('startTimeLocal', ''))[:10],
-        'Godzina': str(act.get('startTimeLocal', ''))[11:16],
-        'Nazwa': act.get('activityName'),
-        'Typ': safe_nested_get(act, 'activityType', 'typeKey')
-        or safe_nested_get(summary, 'activityType', 'typeKey'),
+        'Data': str(start_time_local)[:10],
+        'Godzina': str(start_time_local)[11:16],
+        'Nazwa': extract_val(act, summary, 'activityName', 'name'),
+        'Typ': extract_val(
+            act, summary, 'typeKey', nested_dicts=('activityType', 'summaryDTO')
+        ),
         'Czas_Ruchu_Min': safe_num(
-            act.get('movingDuration'), divisor=60, round_digits=2
+            extract_val(act, summary, 'movingDuration', 'movingTime'),
+            divisor=60,
+            round_digits=2,
+        ),
+        'Czas_Calkowity_Min': safe_num(
+            extract_val(
+                act, summary, 'elapsedDuration', 'elapsedTime', 'duration'
+            ),
+            divisor=60,
+            round_digits=2,
         ),
         'Dystans_Km': safe_num(
-            act.get('distance'), divisor=1000, round_digits=2
+            extract_val(act, summary, 'distance'), divisor=1000, round_digits=2
         ),
-        'Srednie_HR': act.get('averageHR'),
-        'Max_HR': act.get('maxHR'),
-        'Obciazenie_Treningowe_Load': (
-            act.get('activityTrainingLoad')
-            or act.get('trainingLoad')
-            or summary.get('trainingLoad')
+        'Srednie_HR': extract_val(
+            act, summary, 'averageHR', 'averageHeartRate'
         ),
-        'Kalorie': act.get('calories'),
-        'Przewyzszenia_W_Gore_m': act.get('elevationGain'),
-        'Kadencja_Srednia': act.get('averageRunningCadenceInStepsPerMinute'),
+        'Max_HR': extract_val(act, summary, 'maxHR', 'maxHeartRate'),
+        'Efekt_Tlenowy': extract_val(act, summary, 'aerobicTrainingEffect'),
+        'Efekt_Beztlenowy': extract_val(
+            act, summary, 'anaerobicTrainingEffect'
+        ),
+        'Obciazenie_Treningowe_Load': extract_val(
+            act, summary, 'activityTrainingLoad', 'trainingLoad'
+        ),
+        'Kalorie': extract_val(act, summary, 'calories'),
+        'Przewyzszenia_W_Gore_m': extract_val(act, summary, 'elevationGain'),
+        'Przewyzszenia_W_Dol_m': extract_val(act, summary, 'elevationLoss'),
+        'Kadencja_Srednia': extract_val(
+            act,
+            summary,
+            'averageRunningCadenceInStepsPerMinute',
+            'averageBikingCadenceInRevPerMinute',
+            'averageCadence',
+        ),
         'Dlugosc_Kroku_m': safe_num(
-            act.get('avgStrideLength'), divisor=100, round_digits=2
+            extract_val(act, summary, 'avgStrideLength', 'strideLength'),
+            divisor=100,
+            round_digits=2,
         ),
-        'Czas_Kontaktu_z_Podlozem_ms': act.get('avgGroundContactTime'),
+        'Czas_Kontaktu_z_Podlozem_ms': extract_val(
+            act, summary, 'avgGroundContactTime', 'groundContactTime'
+        ),
         'Odchylenie_Pionowe_mm': safe_num(
-            act.get('avgVerticalOscillation'),
+            extract_val(
+                act, summary, 'avgVerticalOscillation', 'verticalOscillation'
+            ),
             scale=10.0,
             divisor=1.0,
             round_digits=1,
         ),
-        'Srednia_Moc_Biegowa_W': act.get('avgPower') or act.get('averagePower'),
-        'VO2_Max_Treningu': act.get('vO2MaxValue'),
         'Balans_L_P': balance,
+        'Srednia_Moc_W': extract_val(act, summary, 'avgPower', 'averagePower'),
+        'Znormalizowana_Moc_W': extract_val(
+            act, summary, 'normPower', 'normalizedPower'
+        ),
+        'VO2_Max_Treningu': extract_val(act, summary, 'vO2MaxValue'),
+        'Temperatura_Srednia_C': extract_val(
+            act, summary, 'averageTemperature', 'minTemperature'
+        ),
     }
     rows.append(record)
 
