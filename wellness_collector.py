@@ -6,27 +6,27 @@ from garminconnect import Garmin
 DAYS_TO_FETCH = 10
 
 
-def safe_nested_get(d, *keys, default=None):
-  """Bezpiecznie wyciąga wartości z głęboko zagnieżdżonych słowników."""
-  curr = d
+def extract_val(d, *keys, nested_dicts=('userDailySummary', 'stats')):
+  """Wyciąga wartości z korzenia lub zagnieżdżonych struktur API Garmina."""
+  if not isinstance(d, dict):
+    return None
   for k in keys:
-    if not isinstance(curr, dict):
-      return default
-    curr = curr.get(k)
-    if curr is None:
-      return default
-  return curr
-
-
-def to_hours(seconds):
-  if isinstance(seconds, (int, float)) and seconds > 0:
-    return round(seconds / 3600, 2)
+    if d.get(k) is not None:
+      return d.get(k)
+  for n_key in nested_dicts:
+    sub = d.get(n_key)
+    if isinstance(sub, dict):
+      for k in keys:
+        if sub.get(k) is not None:
+          return sub.get(k)
   return None
 
 
-def to_minutes(seconds):
-  if isinstance(seconds, (int, float)) and seconds > 0:
-    return round(seconds / 60)
+def safe_num(val, scale=1.0, divisor=1.0, round_digits=2):
+  """Bezpieczne przeliczanie wartości z zabezpieczeniem przed None."""
+  if isinstance(val, (int, float)) and val > 0:
+    res = (val / divisor) * scale
+    return round(res, round_digits) if round_digits is not None else res
   return None
 
 
@@ -80,49 +80,100 @@ def collect_wellness():
     except Exception:
       sleep_resp_val = None
 
-    sleep_score = safe_nested_get(
-        sleep_resp, 'dailySleepDTO', 'sleepScores', 'overall', 'value'
-    ) or safe_nested_get(sleep_resp, 'sleepScores', 'overall', 'value')
-    sleep_sec = safe_nested_get(sleep_resp, 'dailySleepDTO', 'sleepTimeSeconds')
-    deep_sec = safe_nested_get(sleep_resp, 'dailySleepDTO', 'deepSleepSeconds')
-    light_sec = safe_nested_get(
-        sleep_resp, 'dailySleepDTO', 'lightSleepSeconds'
+    daily_sleep = sleep_resp.get('dailySleepDTO') or {}
+    sleep_score = (
+        daily_sleep.get('sleepScores', {}).get('overall', {}).get('value')
+        or sleep_resp.get('sleepScores', {}).get('overall', {}).get('value')
     )
-    rem_sec = safe_nested_get(sleep_resp, 'dailySleepDTO', 'remSleepSeconds')
-    awake_sec = safe_nested_get(
-        sleep_resp, 'dailySleepDTO', 'awakeSleepSeconds'
+
+    sleep_sec = daily_sleep.get('sleepTimeSeconds') or sleep_resp.get(
+        'sleepTimeSeconds'
     )
+    deep_sec = daily_sleep.get('deepSleepSeconds') or sleep_resp.get(
+        'deepSleepSeconds'
+    )
+    light_sec = daily_sleep.get('lightSleepSeconds') or sleep_resp.get(
+        'lightSleepSeconds'
+    )
+    rem_sec = daily_sleep.get('remSleepSeconds') or sleep_resp.get(
+        'remSleepSeconds'
+    )
+    awake_sec = daily_sleep.get('awakeSleepSeconds') or sleep_resp.get(
+        'awakeSleepSeconds'
+    )
+
+    hrv_summary = hrv_resp.get('hrvSummary') or {}
 
     record = {
         'Data': date_str,
-        'Tetno_Spoczynkowe': stats.get('restingHeartRate'),
-        'Tetno_Maksymalne': stats.get('maxHeartRate'),
-        'HRV_rMSSD': safe_nested_get(hrv_resp, 'hrvSummary', 'lastNightAvg'),
+        'Tetno_Spoczynkowe': extract_val(stats, 'restingHeartRate'),
+        'Tetno_Maksymalne': extract_val(stats, 'maxHeartRate'),
+        'HRV_rMSSD': extract_val(hrv_summary, 'lastNightAvg'),
+        'HRV_Status': extract_val(hrv_summary, 'status'),
         'Sen_Wynik': sleep_score,
-        'Sen_Godziny': to_hours(sleep_sec),
-        'Sen_Gleboki_Min': to_minutes(deep_sec),
-        'Sen_Lekki_Min': to_minutes(light_sec),
-        'Sen_REM_Min': to_minutes(rem_sec),
-        'Sen_Czuwanie_Min': to_minutes(awake_sec),
+        'Sen_Godziny': safe_num(sleep_sec, divisor=3600, round_digits=2),
+        'Sen_Gleboki_Min': safe_num(deep_sec, divisor=60, round_digits=0),
+        'Sen_Lekki_Min': safe_num(light_sec, divisor=60, round_digits=0),
+        'Sen_REM_Min': safe_num(rem_sec, divisor=60, round_digits=0),
+        'Sen_Czuwanie_Min': safe_num(awake_sec, divisor=60, round_digits=0),
+        'SpO2_Srednie': extract_val(stats, 'averageSpO2'),
+        'SpO2_Min': extract_val(stats, 'lowestSpO2'),
         'Oddech_Noc_rpm': (
             sleep_resp_val
-            or stats.get('sleepingRespiration')
-            or stats.get('averageRespirationValue')
+            or extract_val(
+                stats,
+                'sleepingRespiration',
+                'averageRespirationValue',
+                'averageRespiration',
+            )
         ),
-        'BodyBattery_Max': (
-            stats.get('bodyBatteryHighestValue')
-            or stats.get('highestBodyBatteryValue')
-            or stats.get('maxBodyBattery')
+        'BodyBattery_Max': extract_val(
+            stats,
+            'bodyBatteryHighestValue',
+            'highestBodyBatteryValue',
+            'maxBodyBattery',
         ),
-        'BodyBattery_Min': (
-            stats.get('bodyBatteryLowestValue')
-            or stats.get('lowestBodyBatteryValue')
-            or stats.get('minBodyBattery')
+        'BodyBattery_Min': extract_val(
+            stats,
+            'bodyBatteryLowestValue',
+            'lowestBodyBatteryValue',
+            'minBodyBattery',
         ),
-        'Stres_Sredni': stats.get('averageStressLevel'),
-        'Kroki': stats.get('totalSteps', 0),
-        'Kalorie_Aktywne': stats.get('activeKilocalories', 0),
-        'Minuty_Intensywne': stats.get('vigorousIntensityMinutes', 0),
+        'Stres_Sredni': extract_val(stats, 'averageStressLevel'),
+        'Stres_Czas_Odpoczynku_Min': safe_num(
+            extract_val(
+                stats,
+                'restStressDuration',
+                'restStressSeconds',
+                'restStressDurationInSeconds',
+            ),
+            divisor=60,
+            round_digits=0,
+        ),
+        'Stres_Czas_Wysokiego_Min': safe_num(
+            extract_val(
+                stats,
+                'highStressDuration',
+                'highStressSeconds',
+                'highStressDurationInSeconds',
+            ),
+            divisor=60,
+            round_digits=0,
+        ),
+        'Kroki': extract_val(stats, 'totalSteps', 'steps') or 0,
+        'Piętra_W_Gore': extract_val(stats, 'floorsAscended', 'floors') or 0,
+        'Kalorie_Aktywne': extract_val(
+            stats, 'activeKilocalories', 'activeCalories'
+        )
+        or 0,
+        'Kalorie_Spoczynkowe': extract_val(
+            stats, 'bmrKilocalories', 'restingKilocalories', 'bmrCalories'
+        )
+        or 0,
+        'Minuty_Intensywne': extract_val(
+            stats, 'vigorousIntensityMinutes', 'intensityMinutes'
+        )
+        or 0,
     }
     rows.append(record)
     curr_date += datetime.timedelta(days=1)
