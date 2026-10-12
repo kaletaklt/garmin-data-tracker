@@ -8,7 +8,8 @@ from garminconnect import Garmin
 def parse_simple_text_to_garmin_workout(text_input):
   """Tłumaczy opis treningu na strukturę Garmin API.
 
-  Obsługuje wpisy wielowierszowe oraz jednoliniowe z formularzy.
+  Obsługuje wpisy wielowierszowe oraz jednoliniowe spłaszczone przez
+  formularz WWW / HTTP Shortcuts.
   """
   if not text_input or not text_input.strip():
     raise ValueError('Przekazano pusty tekst treningu.')
@@ -23,7 +24,7 @@ def parse_simple_text_to_garmin_workout(text_input):
 
   lines = [l.strip() for l in text_input.split('\n') if l.strip()]
 
-  # Obsługa wejścia spłaszczonego do 1 linii
+  # Obsługa jednoliniowego wejścia z formularza WWW / HTTP Shortcuts
   if len(lines) == 1:
     single_line = lines[0]
     date_match = re.match(r'^(\d{4}-\d{2}-\d{2})\s+(.*)', single_line)
@@ -93,48 +94,55 @@ def parse_simple_text_to_garmin_workout(text_input):
 
 
 def save_workout_to_garmin(client, workout_dict):
-  """Tworzy trening w Garmin Connect używając jawnej metody HTTP POST."""
+  """Wysyła żądanie POST bezpośrednio przez wewnętrzny klient garminconnect / garth."""
+  target = client.client if hasattr(client, 'client') else client
   url_path = '/workout-service/workout'
 
-  # 1. Próba przez connectapi z jawnym podaniem method="POST"
-  try:
-    res = client.connectapi(url_path, method='POST', json=workout_dict)
-    if isinstance(res, dict) and (res.get('workoutId') or res.get('id')):
-      return res.get('workoutId') or res.get('id')
-  except Exception as e:
-    print(f'⚠️ connectapi(method="POST") note: {e}')
+  # 1. Wywołanie bezpośrednio metody _run_request z method="POST"
+  if hasattr(target, '_run_request'):
+    try:
+      resp = target._run_request('POST', url_path, json=workout_dict)
+      res = resp.json()
+      if isinstance(res, dict) and (res.get('workoutId') or res.get('id')):
+        return res.get('workoutId') or res.get('id')
+    except Exception as e:
+      print(f'⚠️ _run_request error: {e}')
 
-  # 2. Próba bezpośrednio przez garth POST
-  try:
-    if hasattr(client, 'garth'):
+  # 2. Rezerwowa próba przez garth.post
+  if hasattr(client, 'garth'):
+    try:
       res = client.garth.post(
-          'connectapi', url_path, json=workout_dict
+          'workout-service', 'workout', json=workout_dict
       ).json()
       if isinstance(res, dict) and (res.get('workoutId') or res.get('id')):
         return res.get('workoutId') or res.get('id')
-  except Exception as e:
-    print(f'⚠️ garth.post note: {e}')
+    except Exception as e:
+      print(f'⚠️ garth.post error: {e}')
 
   raise RuntimeError('Nie udało się utworzyć treningu w Garmin Connect.')
 
 
 def schedule_workout_on_garmin(client, workout_id, date_str):
-  """Przypisuje trening do kalendarza na podany dzień."""
+  """Przypisuje utworzony trening do dnia w kalendarzu."""
+  target = client.client if hasattr(client, 'client') else client
   url_path = f'/workout-service/schedule/{workout_id}'
   payload = {'date': date_str}
 
-  try:
-    client.connectapi(url_path, method='POST', json=payload)
-    return True
-  except Exception as e:
-    print(f'⚠️ connectapi schedule note: {e}')
-
-  try:
-    if hasattr(client, 'garth'):
-      client.garth.post('connectapi', url_path, json=payload)
+  if hasattr(target, '_run_request'):
+    try:
+      target._run_request('POST', url_path, json=payload)
       return True
-  except Exception as e:
-    print(f'⚠️ garth schedule note: {e}')
+    except Exception as e:
+      print(f'⚠️ schedule _run_request error: {e}')
+
+  if hasattr(client, 'garth'):
+    try:
+      client.garth.post(
+          'workout-service', f'schedule/{workout_id}', json=payload
+      )
+      return True
+    except Exception as e:
+      print(f'⚠️ schedule garth error: {e}')
 
   return False
 
