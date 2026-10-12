@@ -11,13 +11,11 @@ def parse_simple_text_to_garmin_workout(text_input):
   Obsługuje:
   1. Wpisy wielowierszowe (z nowymi liniami)
   2. Wpisy z eskapowanymi znakami '\\n'
-  3. Wpisy spłaszczone do 1 linii z formularza GitHub Actions (np. YYYY-MM-DD
-  Nazwa - kroki)
+  3. Wpisy spłaszczone do 1 linii z formularza GitHub Actions / HTTP Shortcuts
   """
   if not text_input or not text_input.strip():
     raise ValueError('Przekazano pusty tekst treningu.')
 
-  # Czyszczenie cudzysłowów oraz eskapowanych znaków nowej linii
   text_input = text_input.strip()
   if (text_input.startswith('"') and text_input.endswith('"')) or (
       text_input.startswith("'") and text_input.endswith("'")
@@ -26,19 +24,16 @@ def parse_simple_text_to_garmin_workout(text_input):
 
   text_input = text_input.replace('\\n', '\n')
 
-  # Podział na linie
   lines = [l.strip() for l in text_input.split('\n') if l.strip()]
 
-  # Obsługa jednoliniowego wejścia z formularza WWW
+  # Obsługa jednoliniowego wejścia z formularza
   if len(lines) == 1:
     single_line = lines[0]
-    # Wyciągnięcie daty YYYY-MM-DD z początku tekstu
     date_match = re.match(r'^(\d{4}-\d{2}-\d{2})\s+(.*)', single_line)
     if date_match:
       date_str = date_match.group(1)
       rest = date_match.group(2)
 
-      # Podział na nazwę i kroki po myślnikach (' - ' lub ' -')
       parts = re.split(r'\s+-\s+|\s+-', rest)
       workout_name = parts[0].strip()
       step_lines = [f'- {p.strip()}' for p in parts[1:] if p.strip()]
@@ -118,12 +113,21 @@ def add_workout_to_garmin(workout_text):
 
     workout_dict, date_str = parse_simple_text_to_garmin_workout(workout_text)
 
-    saved_workout = client.save_workout(workout_dict)
-    workout_id = saved_workout.get('workoutId')
+    # Właściwa metoda do zapisu treningu w garminconnect: add_workout
+    saved_workout = client.add_workout(workout_dict)
+
+    if isinstance(saved_workout, dict):
+      workout_id = saved_workout.get('workoutId') or saved_workout.get('id')
+    else:
+      workout_id = saved_workout
+
     print(f'✅ Utworzono trening w Garmin Connect. (ID: {workout_id})')
 
-    client.schedule_workout(workout_id, date_str)
-    print(f'✅ Przypisano trening do kalendarza na dzień: {date_str}')
+    if workout_id:
+      client.schedule_workout(workout_id, date_str)
+      print(f'✅ Przypisano trening do kalendarza na dzień: {date_str}')
+    else:
+      print('⚠️ Nie udało się odczytać ID utworzonego treningu.')
 
   except Exception as e:
     print(f'❌ Wystąpił błąd podczas dodawania treningu do Garmina: {e}')
