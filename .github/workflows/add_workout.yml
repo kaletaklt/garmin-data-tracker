@@ -1,10 +1,10 @@
-name: Import Treningu (Intervals.icu / Garmin)
+name: Import Treningu (Garmin)
 
 on:
   workflow_dispatch:
     inputs:
       workout_json:
-        description: 'Kod treningu w formacie JSON'
+        description: 'Kod treningu'
         required: true
         type: string
 
@@ -23,11 +23,11 @@ jobs:
       - name: Instalacja zależności
         run: |
           python -m pip install --upgrade pip
-          pip install requests
+          pip install requests garminconnect
 
       - name: Uruchomienie skryptu wgrywania
         env:
-          INTERVALS_ATHLETE_ID: ${{ secrets.INTERVALS_ATHLETE_ID }}
-          INTERVALS_API_KEY: ${{ secrets.INTERVALS_API_KEY }}
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           WORKOUT_PLAN: ${{ inputs.workout_json }}
         run: python add_workout.py
