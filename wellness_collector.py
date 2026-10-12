@@ -14,7 +14,7 @@ def collect_wellness():
     client.login()
 
     end_date = datetime.date.today()
-    start_date = end_date - datetime.timedelta(days=DAYS_TO_FETCH - 1)
+    start_date = end_date - datetime.timedelta(days=DAYS_TO_FETCH - 7)
     
     rows = []
     curr_date = start_date
