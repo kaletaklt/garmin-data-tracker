@@ -20,12 +20,13 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Przywrócenie zapisanej sesji Garmina (ochrona przed 429)
+      - name: Przywrócenie zapisanej sesji (ochrona przed 429)
         uses: actions/cache@v4
         with:
           path: |
             ~/.garth
             .garth
+            .
           key: garmin-session-${{ runner.os }}
 
       - name: Instalacja zależności
