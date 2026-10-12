@@ -1,32 +1,54 @@
 import json
 import os
+import re
 import sys
 from garminconnect import Garmin
 
 
 def parse_simple_text_to_garmin_workout(text_input):
-  """Tłumaczy prosty tekst z pop-upu na strukturę wymaganą przez Garmin API.
+  """Tłumaczy opis treningu na strukturę Garmin API.
 
-  Automatycznie obsługuje zarówna prawdziwe przejścia do nowej linii, jak i
-  eskapowane znaki '\\n' przesłane przez JSON/HTTP Shortcuts.
+  Obsługuje:
+  1. Wpisy wielowierszowe (z nowymi liniami)
+  2. Wpisy z eskapowanymi znakami '\\n'
+  3. Wpisy spłaszczone do 1 linii z formularza GitHub Actions (np. YYYY-MM-DD
+  Nazwa - kroki)
   """
   if not text_input or not text_input.strip():
     raise ValueError('Przekazano pusty tekst treningu.')
 
-  # Normalizacja znaków nowej linii oraz cudzysłowów z JSON
-  text_input = text_input.replace('\\n', '\n').strip()
+  # Czyszczenie cudzysłowów oraz eskapowanych znaków nowej linii
+  text_input = text_input.strip()
   if (text_input.startswith('"') and text_input.endswith('"')) or (
       text_input.startswith("'") and text_input.endswith("'")
   ):
     text_input = text_input[1:-1].strip()
-    text_input = text_input.replace('\\n', '\n')
 
-  lines = [line.strip() for line in text_input.split('\n') if line.strip()]
+  text_input = text_input.replace('\\n', '\n')
+
+  # Podział na linie
+  lines = [l.strip() for l in text_input.split('\n') if l.strip()]
+
+  # Obsługa jednoliniowego wejścia z formularza WWW
+  if len(lines) == 1:
+    single_line = lines[0]
+    # Wyciągnięcie daty YYYY-MM-DD z początku tekstu
+    date_match = re.match(r'^(\d{4}-\d{2}-\d{2})\s+(.*)', single_line)
+    if date_match:
+      date_str = date_match.group(1)
+      rest = date_match.group(2)
+
+      # Podział na nazwę i kroki po myślnikach (' - ' lub ' -')
+      parts = re.split(r'\s+-\s+|\s+-', rest)
+      workout_name = parts[0].strip()
+      step_lines = [f'- {p.strip()}' for p in parts[1:] if p.strip()]
+
+      lines = [date_str, workout_name] + step_lines
 
   if len(lines) < 3:
     raise ValueError(
-        f'Za mało linii w opisie treningu (wykryto {len(lines)} lines).'
-        ' Wymagane min. 3 linie: Data, Nazwa, Kroki.\nOtrzymana'
+        f'Za mało linii/kroków w opisie treningu (wykryto {len(lines)}'
+        ' elementów).\nWymagane min. 3: Data, Nazwa, Kroki.\nOtrzymana'
         f' treść:\n{repr(text_input)}'
     )
 
@@ -63,11 +85,11 @@ def parse_simple_text_to_garmin_workout(text_input):
             'childStepId': None,
             'description': target_str,
             'stepType': {
-                'stepTypeId': 3,  # Active / Interval
+                'stepTypeId': 3,
                 'stepTypeKey': 'interval',
             },
             'endCondition': {
-                'conditionTypeId': 3,  # Distance
+                'conditionTypeId': 3,
                 'conditionTypeKey': 'distance',
             },
             'endConditionValue': distance_meters,
