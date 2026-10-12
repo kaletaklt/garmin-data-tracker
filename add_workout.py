@@ -6,10 +6,9 @@ from garminconnect import Garmin
 
 
 def parse_simple_text_to_garmin_workout(text_input):
-  """Tłumaczy opis treningu na strukturę Garmin API.
+  """Tłumaczy opis treningu na ścisłą strukturę Garmin Workout DTO.
 
-  Obsługuje wpisy wielowierszowe oraz jednoliniowe spłaszczone przez
-  formularz WWW / HTTP Shortcuts.
+  Wymaganą przez endpoint /workout-service/workout.
   """
   if not text_input or not text_input.strip():
     raise ValueError('Przekazano pusty tekst treningu.')
@@ -24,7 +23,7 @@ def parse_simple_text_to_garmin_workout(text_input):
 
   lines = [l.strip() for l in text_input.split('\n') if l.strip()]
 
-  # Obsługa jednoliniowego wejścia z formularza WWW / HTTP Shortcuts
+  # Obsługa wejścia spłaszczonego do jednej linii (np. z formularza WWW / HTTP Shortcuts)
   if len(lines) == 1:
     single_line = lines[0]
     date_match = re.match(r'^(\d{4}-\d{2}-\d{2})\s+(.*)', single_line)
@@ -48,12 +47,14 @@ def parse_simple_text_to_garmin_workout(text_input):
   date_str = lines[0]
   workout_name = lines[1]
 
+  sport_type_running = {'sportTypeId': 1, 'sportTypeKey': 'running'}
+
   workout_dict = {
       'workoutName': workout_name,
-      'sport': 'RUNNING',
+      'sportType': sport_type_running,
       'workoutSegments': [{
           'segmentOrder': 1,
-          'sport': 'RUNNING',
+          'sportType': sport_type_running,
           'workoutSteps': [],
       }],
   }
@@ -77,15 +78,16 @@ def parse_simple_text_to_garmin_workout(text_input):
             'stepOrder': step_order,
             'childStepId': None,
             'description': target_str,
-            'stepType': {
-                'stepTypeId': 3,
-                'stepTypeKey': 'interval',
-            },
+            'stepType': {'stepTypeId': 3, 'stepTypeKey': 'interval'},
             'endCondition': {
                 'conditionTypeId': 3,
                 'conditionTypeKey': 'distance',
             },
             'endConditionValue': distance_meters,
+            'targetType': {
+                'workoutTargetTypeId': 1,
+                'workoutTargetTypeKey': 'no.target',
+            },
         }
         workout_dict['workoutSegments'][0]['workoutSteps'].append(step)
         step_order += 1
@@ -94,11 +96,11 @@ def parse_simple_text_to_garmin_workout(text_input):
 
 
 def save_workout_to_garmin(client, workout_dict):
-  """Wysyła żądanie POST bezpośrednio przez wewnętrzny klient garminconnect / garth."""
+  """Wysyła żądanie utworzenia treningu przy użyciu dostępnych metod w garminconnect / garth."""
   target = client.client if hasattr(client, 'client') else client
   url_path = '/workout-service/workout'
 
-  # 1. Wywołanie bezpośrednio metody _run_request z method="POST"
+  # 1. Próba bezpośrednio przez _run_request
   if hasattr(target, '_run_request'):
     try:
       resp = target._run_request('POST', url_path, json=workout_dict)
@@ -106,9 +108,18 @@ def save_workout_to_garmin(client, workout_dict):
       if isinstance(res, dict) and (res.get('workoutId') or res.get('id')):
         return res.get('workoutId') or res.get('id')
     except Exception as e:
-      print(f'⚠️ _run_request error: {e}')
+      print(f'⚠️ _run_request note: {e}')
 
-  # 2. Rezerwowa próba przez garth.post
+  # 2. Próba przez garth connectapi
+  if hasattr(client, 'garth'):
+    try:
+      res = client.garth.post('connectapi', url_path, json=workout_dict).json()
+      if isinstance(res, dict) and (res.get('workoutId') or res.get('id')):
+        return res.get('workoutId') or res.get('id')
+    except Exception as e:
+      print(f'⚠️ garth connectapi note: {e}')
+
+  # 3. Próba przez garth workout-service
   if hasattr(client, 'garth'):
     try:
       res = client.garth.post(
@@ -117,13 +128,16 @@ def save_workout_to_garmin(client, workout_dict):
       if isinstance(res, dict) and (res.get('workoutId') or res.get('id')):
         return res.get('workoutId') or res.get('id')
     except Exception as e:
-      print(f'⚠️ garth.post error: {e}')
+      print(f'⚠️ garth workout-service note: {e}')
 
-  raise RuntimeError('Nie udało się utworzyć treningu w Garmin Connect.')
+  raise RuntimeError(
+      'Nie udało się utworzyć treningu w Garmin Connect (serwer odrzucił'
+      ' żądanie).'
+  )
 
 
 def schedule_workout_on_garmin(client, workout_id, date_str):
-  """Przypisuje utworzony trening do dnia w kalendarzu."""
+  """Przypisuje utworzony trening do wskazanego dnia w kalendarzu."""
   target = client.client if hasattr(client, 'client') else client
   url_path = f'/workout-service/schedule/{workout_id}'
   payload = {'date': date_str}
@@ -133,7 +147,14 @@ def schedule_workout_on_garmin(client, workout_id, date_str):
       target._run_request('POST', url_path, json=payload)
       return True
     except Exception as e:
-      print(f'⚠️ schedule _run_request error: {e}')
+      print(f'⚠️ schedule _run_request note: {e}')
+
+  if hasattr(client, 'garth'):
+    try:
+      client.garth.post('connectapi', url_path, json=payload)
+      return True
+    except Exception as e:
+      print(f'⚠️ schedule garth connectapi note: {e}')
 
   if hasattr(client, 'garth'):
     try:
@@ -142,7 +163,7 @@ def schedule_workout_on_garmin(client, workout_id, date_str):
       )
       return True
     except Exception as e:
-      print(f'⚠️ schedule garth error: {e}')
+      print(f'⚠️ schedule garth workout-service note: {e}')
 
   return False
 
