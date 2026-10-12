@@ -10,7 +10,7 @@ def collect_wellness():
     password = os.environ.get("GARMIN_PASSWORD")
     
     # Automatyczne logowanie z wykorzystaniem pliku sesji
-    client = Garmin(email, password, session_data_dir=".")
+    client = Garmin(email, password)
     client.login()
 
     end_date = datetime.date.today()
