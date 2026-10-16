@@ -2,6 +2,7 @@ import json
 import os
 import re
 import sys
+import time
 from garminconnect import Garmin
 
 # Tętno maksymalne do przeliczania zakresów procentowych (%HR)
@@ -30,7 +31,6 @@ def parse_hr_target(target_str):
 
 
 def parse_simple_text_to_garmin_workout(text_input):
-    """Tłumaczy tekst z pop-upu na strukturę Garmin Workout DTO z celami tętna."""
     if not text_input or not text_input.strip():
         raise ValueError("Przekazano pusty tekst treningu.")
 
@@ -82,7 +82,6 @@ def parse_simple_text_to_garmin_workout(text_input):
             if len(parts) >= 2:
                 dist_str = parts[0].replace("km", "")
                 
-                # Złapanie całego stringa celu (nawet ze spacjami)
                 target_str = " ".join(parts[1:])
 
                 try:
@@ -97,7 +96,7 @@ def parse_simple_text_to_garmin_workout(text_input):
                     "stepId": None,
                     "stepOrder": step_order,
                     "childStepId": None,
-                    "description": None,  # Resetowanie pola notatki
+                    "description": None,
                     "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
                     "endCondition": {
                         "conditionTypeId": 3,
@@ -107,7 +106,6 @@ def parse_simple_text_to_garmin_workout(text_input):
                 }
 
                 if hr_low is not None and hr_high is not None:
-                    # Prawidłowa struktura celu dla serwerów Garmin
                     step["targetType"] = {
                         "workoutTargetTypeId": 4,
                         "workoutTargetTypeKey": "heart.rate.zone",
@@ -137,7 +135,7 @@ def save_workout_to_garmin(client, workout_dict):
             res = resp.json()
             if isinstance(res, dict) and (res.get("workoutId") or res.get("id")):
                 return res.get("workoutId") or res.get("id")
-        except Exception as e:
+        except Exception:
             pass
 
     if hasattr(client, "garth"):
@@ -145,31 +143,47 @@ def save_workout_to_garmin(client, workout_dict):
             res = client.garth.post("connectapi", url_path, json=workout_dict).json()
             if isinstance(res, dict) and (res.get("workoutId") or res.get("id")):
                 return res.get("workoutId") or res.get("id")
-        except Exception as e:
+        except Exception:
             pass
 
     raise RuntimeError("Nie udało się utworzyć treningu w Garmin Connect.")
 
 
 def schedule_workout_on_garmin(client, workout_id, date_str):
+    """Przypisuje trening do kalendarza, korzystając z wielu prób (retry) i opóźnień."""
     target = client.client if hasattr(client, "client") else client
     url_path = f"/workout-service/schedule/{workout_id}"
     payload = {"date": date_str}
 
-    if hasattr(target, "_run_request"):
-        try:
-            target._run_request("POST", url_path, json=payload)
-            return True
-        except Exception:
-            pass
+    # Próbujemy 3 razy, dając serwerowi chwilę na reset połączenia
+    for attempt in range(3):
+        time.sleep(3)
+        print(f"⏳ Próba przypisania do kalendarza ({attempt + 1}/3)...")
+        
+        # 1. Wbudowana metoda
+        if hasattr(client, "schedule_workout"):
+            try:
+                client.schedule_workout(workout_id, date_str)
+                return True
+            except Exception:
+                pass
+                
+        # 2. _run_request
+        if hasattr(target, "_run_request"):
+            try:
+                target._run_request("POST", url_path, json=payload)
+                return True
+            except Exception:
+                pass
 
-    if hasattr(client, "garth"):
-        try:
-            client.garth.post("connectapi", url_path, json=payload)
-            return True
-        except Exception:
-            pass
-
+        # 3. Garth API
+        if hasattr(client, "garth"):
+            try:
+                client.garth.post("connectapi", url_path, json=payload)
+                return True
+            except Exception:
+                pass
+                
     return False
 
 
@@ -195,7 +209,7 @@ def add_workout_to_garmin(workout_text):
             if schedule_workout_on_garmin(client, workout_id, date_str):
                 print(f"✅ Przypisano trening do kalendarza na dzień: {date_str}")
             else:
-                print("⚠️ Nie udało się przypisać treningu do kalendarza.")
+                print("⚠️ Nie udało się przypisać treningu do kalendarza po 3 próbach.")
 
     except Exception as e:
         print(f"❌ Wystąpił błąd: {e}")
