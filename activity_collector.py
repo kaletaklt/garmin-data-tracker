@@ -90,4 +90,38 @@ def main():
     if not sheet_id:
         raise ValueError("Brak klucza GOOGLE_SHEET_ID w zmiennych środowiskowych.")
         
-    updater = GSheetsUpdater(spreadsheet_id=sheet_id
+    updater = GSheetsUpdater(spreadsheet_id=sheet_id, sheet_name="Aktywnosci")
+
+    # 2. Pobranie ostatnich aktywności
+    activities = collector.fetch_recent_activities(limit=100)
+    if not activities:
+        print("Brak aktywności do przetworzenia.")
+        return
+    
+    # 3. Ustalenie okresu synchronizacji (30 dni)
+    cutoff_date = datetime.date.today() - datetime.timedelta(days=30)
+    print(f"Analiza treningów po dacie: {cutoff_date}...")
+    
+    # 4. Przetwarzanie i wysyłanie danych w kolejności chronologicznej (od najstarszej)
+    for activity in reversed(activities):
+        activity_id = str(activity.get("activityId", ""))
+        start_date_str = activity.get("startTimeLocal", "")[:10]
+        
+        if not activity_id or not start_date_str:
+            continue
+            
+        try:
+            act_date = datetime.datetime.strptime(start_date_str, "%Y-%m-%d").date()
+            if act_date < cutoff_date:
+                continue
+        except ValueError:
+            print(f"Pominięto błędny format daty dla aktywności {activity_id}.")
+            continue
+            
+        row = collector.extract_activity_data(activity)
+        updater.upsert_row(identifier=activity_id, col_index=1, row_data=row)
+
+    print("Zakończono pomyślnie synchronizację z Google Sheets.")
+
+if __name__ == "__main__":
+    main()
