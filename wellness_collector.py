@@ -15,7 +15,7 @@ class WellnessCollector:
                 return default
         return d if d is not None else default
 
-    def fetch_daily_stats(self, target_date):
+def fetch_daily_stats(self, target_date):
         date_iso = target_date.isoformat()
         try:
             print(f"Pobieranie i mapowanie statystyk wellness dla {date_iso}...")
@@ -39,43 +39,56 @@ class WellnessCollector:
             def to_mins(seconds):
                 return round((seconds or 0) / 60, 2) if seconds else ""
 
-            # Obsługa wyniku snu
-            score_data = dto.get("sleepScore")
-            if isinstance(score_data, dict):
-                sleep_score = score_data.get("value", "")
-            else:
-                sleep_score = score_data if score_data is not None else ""
+            # --- BEZPIECZNE POBIERANIE WYNIKU SNU ---
+            sleep_score = ""
+            if "sleepScores" in dto and "overall" in dto["sleepScores"]:
+                sleep_score = dto["sleepScores"]["overall"].get("value", "")
+            elif "sleepScores" in sleep and "overall" in sleep["sleepScores"]:
+                sleep_score = sleep["sleepScores"]["overall"].get("value", "")
+            elif "sleepScore" in dto:
+                score_data = dto["sleepScore"]
+                sleep_score = score_data.get("value", "") if isinstance(score_data, dict) else score_data
 
-            # Minuty intensywne (Garmin: umiarkowane + 2x intensywne)
+            # --- BEZPIECZNE POBIERANIE KALORII SPOCZYNKOWYCH ---
+            active_kcal = stats.get("activeKilocalories") or 0
+            total_kcal = stats.get("totalKilocalories") or 0
+            # Garmin zazwyczaj używa 'bmrKilocalories'
+            resting_kcal = stats.get("bmrKilocalories")
+            
+            # Jeśli API nie zwróci BMR, liczymy ręcznie: Całkowite - Aktywne
+            if not resting_kcal and total_kcal > 0:
+                resting_kcal = total_kcal - active_kcal
+                
+            # --- MINUTY INTENSYWNE ---
             mod = stats.get("moderateIntensityMinutes", 0) or 0
             vig = stats.get("vigorousIntensityMinutes", 0) or 0
             intensity_mins = mod + (vig * 2)
 
             return [
-                date_iso,
-                stats.get("restingHeartRate", ""),
-                stats.get("maxHeartRate", ""),
-                hrv_sum.get("lastNightAvg", ""),
-                hrv_sum.get("status", ""),
-                sleep_score,  # Poprawione
-                to_hours(dto.get("sleepTimeSeconds", 0)),
-                to_mins(dto.get("deepSleepSeconds", 0)),
-                to_mins(dto.get("lightSleepSeconds", 0)),
-                to_mins(dto.get("remSleepSeconds", 0)),
-                to_mins(dto.get("awakeSleepSeconds", 0)),
-                dto.get("averageSpO2Value", ""),
-                dto.get("lowestSpO2Value", ""),
-                dto.get("averageRespirationValue", ""),
-                stats.get("bodyBatteryHighestValue", ""),
-                stats.get("bodyBatteryLowestValue", ""),
-                stats.get("averageStressLevel", ""),
-                to_mins(stats.get("restStressDuration", 0)),
-                to_mins(stats.get("highStressDuration", 0)),
-                stats.get("totalSteps", ""),
-                stats.get("floorsAscended", ""),
-                stats.get("activeKilocalories", ""),
-                stats.get("bmr", stats.get("restingKilocalories", "")),  # Poprawiona literówka BMR
-                intensity_mins if intensity_mins > 0 else ""  # Pełna liczba całkowita
+                date_iso,                                   # 1. Data
+                stats.get("restingHeartRate", ""),          # 2. Tetno_Spoczynkowe
+                stats.get("maxHeartRate", ""),              # 3. Tetno_Maksymalne
+                hrv_sum.get("lastNightAvg", ""),            # 4. HRV_rMSSD
+                hrv_sum.get("status", ""),                  # 5. HRV_Status
+                sleep_score,                                # 6. Sen_Wynik
+                to_hours(dto.get("sleepTimeSeconds", 0)),   # 7. Sen_Godziny
+                to_mins(dto.get("deepSleepSeconds", 0)),    # 8. Sen_Gleboki_Min
+                to_mins(dto.get("lightSleepSeconds", 0)),   # 9. Sen_Lekki_Min
+                to_mins(dto.get("remSleepSeconds", 0)),     # 10. Sen_REM_Min
+                to_mins(dto.get("awakeSleepSeconds", 0)),   # 11. Sen_Czuwanie_Min
+                dto.get("averageSpO2Value", ""),            # 12. SpO2_Srednie
+                dto.get("lowestSpO2Value", ""),             # 13. SpO2_Min
+                dto.get("averageRespirationValue", ""),     # 14. Oddech_Noc_Sredni
+                stats.get("bodyBatteryHighestValue", ""),   # 15. BodyBattery_Max
+                stats.get("bodyBatteryLowestValue", ""),    # 16. BodyBattery_Min
+                stats.get("averageStressLevel", ""),        # 17. Stres_Sredni
+                to_mins(stats.get("restStressDuration", 0)),# 18. Stres_Czas_Odpoczynku_Min
+                to_mins(stats.get("highStressDuration", 0)),# 19. Stres_Czas_Wysokiego_Min
+                stats.get("totalSteps", ""),                # 20. Kroki
+                stats.get("floorsAscended", ""),            # 21. Piętra_W_Gore
+                active_kcal if active_kcal > 0 else "",     # 22. Kalorie_Aktywne
+                resting_kcal if resting_kcal else "",       # 23. Kalorie_Spoczynkowe
+                intensity_mins if intensity_mins > 0 else ""# 24. Minuty_Intensywne
             ]
         except Exception as e:
             print(f"Błąd pobierania danych dla {date_iso}: {e}")
