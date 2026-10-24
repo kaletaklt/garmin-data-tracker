@@ -58,7 +58,8 @@ def main():
     if not sheet_id:
         raise ValueError("Brak GOOGLE_SHEET_ID.")
 
-    updater = GSheetsUpdater(spreadsheet_id=sheet_id, sheet_name="Aktywności")
+    # ZMieniona nazwa zakładki na "Aktywnosci" (bez 'ś')
+    updater = GSheetsUpdater(spreadsheet_id=sheet_id, sheet_name="Aktywnosci")
     
     for activity in reversed(activities):
         activity_id = str(activity.get("activityId", ""))
