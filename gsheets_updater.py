@@ -24,24 +24,22 @@ class GSheetsUpdater:
     def upsert_row(self, identifier: str, col_index: int, row_data: list):
         """Aktualizuje wiersz jeśli identifier (Data/ID) istnieje, w przeciwnym razie dodaje nowy na końcu."""
         try:
-            # Szukamy czy identyfikator już istnieje (np. dzisiejsza data)
+            # W nowym gspread (6.0+), find() zwraca None, jeśli komórka nie istnieje
             cell = self.sheet.find(str(identifier), in_column=col_index)
             
-            # Próba aktualizacji wiersza (obsługa różnych wersji biblioteki gspread)
-            try:
-                self.sheet.update(values=[row_data], range_name=f"A{cell.row}")
-            except TypeError:
-                self.sheet.update(f"A{cell.row}", [row_data])
-                
-            print(f"Zaktualizowano istniejący wpis dla: {identifier} (Wiersz {cell.row}).")
-            
-        except gspread.exceptions.CellNotFound:
-            # Jeśli data/ID nie istnieje - dodajemy nowy wiersz
-            self.sheet.append_row(row_data)
-            print(f"Dodano całkowicie nowy wpis dla: {identifier}.")
-        except Exception as e:
-            if "not found" in str(e).lower():
+            if cell is None:
+                # Jeśli data/ID nie istnieje - dodajemy nowy wiersz
                 self.sheet.append_row(row_data)
                 print(f"Dodano całkowicie nowy wpis dla: {identifier}.")
             else:
-                print(f"Błąd podczas zapisu dla {identifier}: {e}")
+                # Jeśli data/ID istnieje - nadpisujemy wiersz aktualnymi danymi
+                try:
+                    self.sheet.update(values=[row_data], range_name=f"A{cell.row}")
+                except TypeError:
+                    # Fallback dla starszych wersji gspread
+                    self.sheet.update(f"A{cell.row}", [row_data])
+                    
+                print(f"Zaktualizowano istniejący wpis dla: {identifier} (Wiersz {cell.row}).")
+                
+        except Exception as e:
+            print(f"Błąd podczas zapisu dla {identifier}: {e}")
