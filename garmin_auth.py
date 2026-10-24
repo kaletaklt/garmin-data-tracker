@@ -1,22 +1,23 @@
 import os
 from garminconnect import Garmin
 
-def login():
-    email = os.environ.get("GARMIN_EMAIL")
-    password = os.environ.get("GARMIN_PASSWORD")
-    
-    if not email or not password:
-        print("Brak danych logowania Garmin w Secrets.")
-        exit(1)
+class GarminAuthenticator:
+    def __init__(self):
+        # Pobieranie danych uwierzytelniających ze zmiennych środowiskowych
+        self.email = os.getenv("GARMIN_EMAIL")
+        self.password = os.getenv("GARMIN_PASSWORD")
+        self.client = None
 
-    try:
-        # Argument przeniesiony do metody login()
-        client = Garmin(email, password)
-        client.login(".")
-        print("Zalogowano do Garmin Connect.")
-    except Exception as e:
-        print(f"Błąd logowania: {e}")
-        exit(1)
+    def login(self):
+        """Loguje użytkownika i zwraca aktywną sesję klienta Garmin."""
+        if not self.email or not self.password:
+            raise ValueError("Brak danych logowania. Sprawdź zmienne środowiskowe.")
 
-if __name__ == "__main__":
-    login()
+        try:
+            self.client = Garmin(self.email, self.password)
+            self.client.login()
+            print("Pomyślnie zalogowano do Garmin Connect.")
+            return self.client
+        except Exception as e:
+            print(f"Błąd autoryzacji z API Garmin: {e}")
+            raise e
