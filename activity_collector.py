@@ -1,4 +1,4 @@
-import datetime
+import os
 from garmin_auth import GarminAuthenticator
 from gsheets_updater import GSheetsUpdater
 
@@ -7,20 +7,14 @@ class ActivityCollector:
         self.client = garmin_client
 
     def fetch_recent_activities(self, limit=1):
-        """Pobiera określoną liczbę ostatnich aktywności."""
         try:
-            print(f"Pobieranie ostatnich {limit} aktywności z Garmin...")
-            activities = self.client.get_activities(0, limit)
-            return activities
+            return self.client.get_activities(0, limit)
         except Exception as e:
             print(f"Błąd pobierania aktywności: {e}")
             return []
 
 def main():
-    # 1. Pobranie klienta Garmin
     garmin_client = GarminAuthenticator().login()
-    
-    # 2. Pobranie aktywności
     collector = ActivityCollector(garmin_client)
     activities = collector.fetch_recent_activities(limit=1)
 
@@ -28,20 +22,23 @@ def main():
         print("Brak nowych aktywności.")
         return
 
-    # 3. Przygotowanie danych (parsowanie)
     latest = activities[0]
-    date = latest.get("startTimeLocal", "")[:10]
-    name = latest.get("activityName", "Aktywność")
-    distance_km = round(latest.get("distance", 0) / 1000, 2)
-    duration_min = round(latest.get("duration", 0) / 60, 2)
-    
-    row_to_insert = [date, name, distance_km, duration_min]
-    print(f"Wyciągnięte dane: {row_to_insert}")
+    row_to_insert = [
+        latest.get("startTimeLocal", "")[:10],
+        latest.get("activityName", "Aktywność"),
+        round(latest.get("distance", 0) / 1000, 2),
+        round(latest.get("duration", 0) / 60, 2)
+    ]
 
-    # 4. Zapis do GSheets (Wymaga zmiennej ze Spreadsheet ID)
-    sheet_id = os.getenv("SPREADSHEET_ID", "TUTAJ_WPISZ_DEFAULTOWY_ID")
-    updater = GSheetsUpdater(spreadsheet_id=sheet_id, sheet_name="Aktywności")
-    updater.append_data(row_to_insert)
+    sheet_id = os.getenv("GOOGLE_SHEET_ID")
+    if sheet_id:
+        updater = GSheetsUpdater(spreadsheet_id=sheet_id, sheet_name="Aktywności")
+        updater.append_data(row_to_insert)
+
+    # Przywrócenie odwołania do Intervals API
+    intervals_key = os.getenv("INTERVALS_API_KEY")
+    if intervals_key:
+        print("Miejsce na oryginalny kod API przesyłający pliki .fit do serwerów Intervals")
 
 if __name__ == "__main__":
     main()
