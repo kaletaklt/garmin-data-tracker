@@ -7,16 +7,12 @@ class GSheetsUpdater:
         self.spreadsheet_id = spreadsheet_id
         self.sheet_name = sheet_name
         self.client = self._authenticate()
-        # Inicjalizacja konkretnego arkusza już na starcie
         self.sheet = self.client.open_by_key(self.spreadsheet_id).worksheet(self.sheet_name)
 
     def _authenticate(self):
-        """Uwierzytelnia w Google pobierając dane z GitHub Secrets w postaci stringa JSON."""
         creds_json = os.getenv("GSPREAD_CREDENTIALS")
-
         if not creds_json:
-            raise ValueError("Brak poświadczeń. Upewnij się, że zmienna GSPREAD_CREDENTIALS jest ustawiona w YML.")
-
+            raise ValueError("Brak poświadczeń. Upewnij się, że zmienna GSPREAD_CREDENTIALS jest ustawiona.")
         try:
             creds_dict = json.loads(creds_json)
             client = gspread.service_account_from_dict(creds_dict)
@@ -25,22 +21,27 @@ class GSheetsUpdater:
             print(f"Błąd autoryzacji Google Sheets: {e}")
             raise e
 
-    def get_existing_identifiers(self, col_index=1):
-        """Pobiera listę unikalnych wartości (Daty lub ID) z zadanej kolumny, by unikać duplikatów."""
+    def upsert_row(self, identifier: str, col_index: int, row_data: list):
+        """Aktualizuje wiersz jeśli identifier (Data/ID) istnieje, w przeciwnym razie dodaje nowy na końcu."""
         try:
-            return self.sheet.col_values(col_index)
-        except Exception as e:
-            print(f"Błąd pobierania istniejących danych z kolumny {col_index}: {e}")
-            return []
-
-    def append_rows(self, rows_data: list):
-        """Dopisuje wiele wierszy naraz na końcu wybranego arkusza."""
-        if not rows_data:
-            print(f"Brak nowych danych do zapisu w arkuszu {self.sheet_name}.")
-            return
+            # Szukamy czy identyfikator już istnieje (np. dzisiejsza data)
+            cell = self.sheet.find(str(identifier), in_column=col_index)
             
-        try:
-            self.sheet.append_rows(rows_data)
-            print(f"Pomyślnie dodano {len(rows_data)} nowych wierszy do arkusza {self.sheet_name}.")
+            # Próba aktualizacji wiersza (obsługa różnych wersji biblioteki gspread)
+            try:
+                self.sheet.update(values=[row_data], range_name=f"A{cell.row}")
+            except TypeError:
+                self.sheet.update(f"A{cell.row}", [row_data])
+                
+            print(f"Zaktualizowano istniejący wpis dla: {identifier} (Wiersz {cell.row}).")
+            
+        except gspread.exceptions.CellNotFound:
+            # Jeśli data/ID nie istnieje - dodajemy nowy wiersz
+            self.sheet.append_row(row_data)
+            print(f"Dodano całkowicie nowy wpis dla: {identifier}.")
         except Exception as e:
-            print(f"Błąd podczas zapisu do arkusza: {e}")
+            if "not found" in str(e).lower():
+                self.sheet.append_row(row_data)
+                print(f"Dodano całkowicie nowy wpis dla: {identifier}.")
+            else:
+                print(f"Błąd podczas zapisu dla {identifier}: {e}")
