@@ -15,7 +15,7 @@ class WellnessCollector:
                 return default
         return d if d is not None else default
 
-def fetch_daily_stats(self, target_date):
+    def fetch_daily_stats(self, target_date):
         date_iso = target_date.isoformat()
         try:
             print(f"Pobieranie i mapowanie statystyk wellness dla {date_iso}...")
