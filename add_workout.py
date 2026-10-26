@@ -1,5 +1,6 @@
 import re
 import os
+import sys
 from garmin_auth import GarminAuthenticator
 
 class WorkoutStepParser:
@@ -115,54 +116,71 @@ class WorkoutManager:
 
     def upload_and_schedule(self, workout_payload: dict, target_date: str):
         try:
-            print(f"Zapisywanie treningu: '{workout_payload['workoutName']}' w bibliotece...")
-            # Poniższy kod wymaga dostępnej funkcji z biblioteki garminconnect
-            # saved_workout = self.client.add_workout(workout_payload)
-            # workout_id = saved_workout.get("workoutId")
+            print(f"Zapisywanie treningu: '{workout_payload['workoutName']}' w bibliotece Garmina...")
             
-            # if workout_id and target_date:
-            #     self.client.schedule_workout(workout_id, target_date)
-            #     print(f"Sukces! Trening przypisano do kalendarza na dzień: {target_date}")
+            # Właściwe wysłanie treningu na serwery
+            response = self.client.add_workout(workout_payload)
+            print("Trening pomyślnie zapisany w bibliotece.")
+            
+            # Pobieranie wygenerowanego ID, by wstawić do kalendarza
+            workout_id = None
+            if isinstance(response, dict):
+                workout_id = response.get("workoutId")
+            
+            if workout_id and target_date:
+                self.client.schedule_workout(workout_id, target_date)
+                print(f"SUKCES! Trening przypisano do kalendarza na dzień: {target_date}")
+            else:
+                print(f"UWAGA: Trening został dodany, ale API nie zwróciło ID do umieszczenia w kalendarzu na dzień {target_date}.")
                 
         except Exception as e:
-            print(f"Błąd wysyłania do kalendarza: {e}")
+            print(f"Błąd krytyczny API Garmina: {e}")
+            sys.exit(1) # Wywołanie czerwonego błędu w GitHubie
 
 
 def main():
-    raw_workout_code = os.getenv("WORKOUT_CODE")
+    raw_workout_code = os.getenv("WORKOUT_CODE", "")
     
     if not raw_workout_code:
-        print("Brak kodu treningu w zmiennej WORKOUT_CODE.")
-        return
+        print("Błąd: Brak kodu treningu. Puste pole.")
+        sys.exit(1) # Wywołanie czerwonego błędu w GitHubie
 
-    # Usunięcie pustych linii i podział tekstu na linijki
-    lines = [line.strip() for line in raw_workout_code.strip().split('\n') if line.strip()]
+    # Nieważne czy wprowadzono tekst z enterami, czy w jednej spłaszczonej linijce
+    # Rozbijamy surowy tekst według identyfikatorów segmentów (zostawiając je jako przerywniki)
+    parts = re.split(r'\b(warmup|interval|recovery|cooldown)\s*,', raw_workout_code, flags=re.IGNORECASE)
     
-    if len(lines) < 3:
-        print("Błąd: Za mało danych. Format to:\nData (YYYY-MM-DD)\nNazwa\nSegmenty...")
-        return
+    if len(parts) < 3:
+        print("Błąd: Nie rozpoznano żadnych kroków. Trening musi zawierać parametry takie jak 'warmup,' lub 'interval,'.")
+        sys.exit(1) # Wywołanie czerwonego błędu w GitHubie
 
-    # Sztywna interpretacja wklejonego tekstu
-    target_date = lines[0]
-    workout_name = lines[1]
-    segments_to_process = lines[2:]
+    # Pierwszy zrzucony kawałek to zawsze nasza Data i Nazwa
+    prefix = parts[0].strip()
+    
+    # Wyciąganie daty w formacie YYYY-MM-DD
+    date_match = re.search(r'\b(\d{4}-\d{2}-\d{2})\b', prefix)
+    if not date_match:
+        print("Błąd: Nie znaleziono daty w formacie (YYYY-MM-DD) na początku tekstu.")
+        sys.exit(1) # Wywołanie czerwonego błędu w GitHubie
+        
+    target_date = date_match.group(1)
+    
+    # Wszystko, co zostało w prefiksie po usunięciu daty, to nasza nazwa
+    workout_name = prefix.replace(target_date, '').strip()
+    if not workout_name:
+        workout_name = "Nowy Trening Biegowy"
 
+    # Autoryzacja
     garmin_client = GarminAuthenticator().login()
     manager = WorkoutManager(garmin_client)
     parser = WorkoutStepParser()
     builder = GarminWorkoutBuilder(workout_name)
 
-    # Przetwarzanie segmentów od trzeciej linijki w dół
-    for line in segments_to_process:
-        if ',' in line:
-            step_type, text = line.split(',', 1)
-            parsed_step = parser.parse(step_type, text)
-            builder.add_step(parsed_step)
-        else:
-            print(f"Pominięto błędny segment (brak przecinka): {line}")
+    # Budowanie poszczególnych kroków (krok co 2, ponieważ regex zostawił słowa kluczowe)
+    for i in range(1, len(parts), 2):
+        step_type = parts[i].lower()
+        text = parts[i+1]
+        parsed_step = parser.parse(step_type, text)
+        builder.add_step(parsed_step)
 
-    manager.upload_and_schedule(builder.get_payload(), target_date)
-
-
-if __name__ == "__main__":
-    main()
+    # Przekazanie do wysyłki
+    manager.upload
