@@ -3,15 +3,10 @@ name: Add Garmin Workout
 on:
   workflow_dispatch:
     inputs:
-      target_date:
-        description: 'Data treningu (YYYY-MM-DD)'
-        required: true
-      workout_name:
-        description: 'Nazwa treningu'
-        required: true
       workout_code:
-        description: 'Kod treningu'
+        description: 'Kod treningu (Linia 1: Data, Linia 2: Nazwa, Linie 3+: Trening)'
         required: true
+        type: string
 
 jobs:
   run-script:
@@ -28,7 +23,5 @@ jobs:
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
-          TARGET_DATE: ${{ github.event.inputs.target_date }}
-          WORKOUT_NAME: ${{ github.event.inputs.workout_name }}
           WORKOUT_CODE: ${{ github.event.inputs.workout_code }}
         run: python add_workout.py
