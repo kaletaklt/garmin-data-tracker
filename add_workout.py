@@ -3,18 +3,15 @@ import os
 from garmin_auth import GarminAuthenticator
 
 class WorkoutStepParser:
-    """Odpowiada wyłącznie za rozbijanie tekstu na zmienne (OOP - Single Responsibility)."""
     def __init__(self):
-        # Wyłapuje dystans (np. 2km, 2.5km, 500m)
         self.dist_re = re.compile(r'(\d+(?:\.\d+)?)\s*(km|m)\b', re.IGNORECASE)
-        # Wyłapuje czas (np. 10min, 30s)
         self.time_re = re.compile(r'(\d+(?:\.\d+)?)\s*(min|s|sek)\b', re.IGNORECASE)
-        # Wyłapuje widełki tętna (np. 125-138bpm lub 125 - 138 bpm)
         self.hr_re = re.compile(r'(\d+)\s*-\s*(\d+)\s*bpm', re.IGNORECASE)
+        self.pace_re = re.compile(r'(\d+):(\d{2})\s*-\s*(\d+):(\d{2})\s*min/km', re.IGNORECASE)
 
     def parse(self, step_type: str, text: str) -> dict:
         parsed = {
-            "step_type": step_type,
+            "step_type": step_type.strip(),
             "condition_type": "lap.button", 
             "condition_value": None,
             "target_type": "no.target",
@@ -23,7 +20,7 @@ class WorkoutStepParser:
             "description": text.strip()
         }
 
-        # 1. Parsowanie czasu
+        # 1. Parsowanie czasu trwania
         time_match = self.time_re.search(parsed["description"])
         if time_match:
             val = float(time_match.group(1))
@@ -32,7 +29,7 @@ class WorkoutStepParser:
             parsed["condition_value"] = int(val * 60) if unit == 'min' else int(val)
             parsed["description"] = self.time_re.sub('', parsed["description"]).strip()
 
-        # 2. Parsowanie dystansu (nadpisuje lap.button lub czas)
+        # 2. Parsowanie dystansu
         dist_match = self.dist_re.search(parsed["description"])
         if dist_match:
             val = float(dist_match.group(1))
@@ -41,19 +38,29 @@ class WorkoutStepParser:
             parsed["condition_value"] = int(val * 1000) if unit == 'km' else int(val)
             parsed["description"] = self.dist_re.sub('', parsed["description"]).strip()
 
-        # 3. Parsowanie tętna (TUTAJ JEST TWOJA POPRAWKA)
+        # 3. Parsowanie tętna (BPM)
         hr_match = self.hr_re.search(parsed["description"])
         if hr_match:
             parsed["target_type"] = "heart.rate.bpm"
             parsed["target_value_1"] = int(hr_match.group(1))
             parsed["target_value_2"] = int(hr_match.group(2))
-            # Usuwamy wyłapane bpm z notatki
             parsed["description"] = self.hr_re.sub('', parsed["description"]).strip()
 
-        # Oczyszczenie opisu z podwójnych spacji
+        # 4. Parsowanie tempa (min/km -> m/s)
+        pace_match = self.pace_re.search(parsed["description"])
+        if pace_match:
+            parsed["target_type"] = "pace"
+            sec_per_km_1 = int(pace_match.group(1)) * 60 + int(pace_match.group(2))
+            sec_per_km_2 = int(pace_match.group(3)) * 60 + int(pace_match.group(4))
+            
+            if sec_per_km_1 > 0 and sec_per_km_2 > 0:
+                parsed["target_value_1"] = round(1000.0 / sec_per_km_1, 3) 
+                parsed["target_value_2"] = round(1000.0 / sec_per_km_2, 3) 
+            
+            parsed["description"] = self.pace_re.sub('', parsed["description"]).strip()
+
+        # Oczyszczenie opisów
         parsed["description"] = re.sub(r'\s+', ' ', parsed["description"]).strip()
-        
-        # Jeśli notatka jest pusta, zamieniamy na None (aby API Garmina nie wyrzucało błędów)
         if not parsed["description"]:
             parsed["description"] = None
 
@@ -61,7 +68,6 @@ class WorkoutStepParser:
 
 
 class GarminWorkoutBuilder:
-    """Odpowiada wyłącznie za tworzenie struktury JSON wymaganej przez API Garmina."""
     def __init__(self, workout_name: str, sport="running"):
         self.workout = {
             "workoutName": workout_name,
@@ -93,7 +99,6 @@ class GarminWorkoutBuilder:
             "description": parsed_data["description"]
         }
 
-        # Jeśli Parser znalazł widełki tętna, wstrzykujemy je do JSONa
         if parsed_data["target_type"] != "no.target":
             step["targetType"] = {
                 "workoutTargetTypeId": target_map.get(parsed_data["target_type"], 1),
@@ -110,44 +115,44 @@ class GarminWorkoutBuilder:
 
 
 class WorkoutManager:
-    """Odpowiada wyłącznie za uwierzytelnianie i autoryzowaną wysyłkę paczki."""
     def __init__(self, garmin_client):
         self.client = garmin_client
 
     def upload_workout(self, workout_payload: dict):
         try:
             print(f"Wysyłanie treningu: '{workout_payload['workoutName']}' do Garmina...")
-            
-            # TODO: Jeśli korzystasz ze specyficznej metody garminconnect do dodawania, wklej ją tu.
+            # Dedykowana metoda w bibliotece garminconnect:
             # self.client.add_workout(workout_payload) 
-            
-            print("Trening z targetami HR i poprawnie wyczyszczoną notatką został zbudowany i przekazany!")
+            print("Trening zaimportowany pomyślnie!")
         except Exception as e:
             print(f"Błąd wysyłania: {e}")
 
 
 def main():
+    # Przykład prostego podawania surowego kodu treningu, np. ze zmiennej w GitHub Actions
+    workout_name = "Czwartek: Progi tempowe 2x 3km (Sub 1:30 HM)"
+    raw_workout_code = """
+    warmup, 15min 125-138bpm Swobodna rozgrzewka
+    interval, 3km 4:10-4:20min/km Wejście w próg mleczanowy
+    recovery, 3min 120-130bpm Luźny trucht do wyrównania oddechu
+    interval, 3km 4:10-4:20min/km Stabilne tempo startowe
+    cooldown, 10min 125-135bpm Wyciszenie organizmu
+    """
+
     garmin_client = GarminAuthenticator().login()
     manager = WorkoutManager(garmin_client)
-
     parser = WorkoutStepParser()
-    builder = GarminWorkoutBuilder(workout_name="Trening: Testowy Interwał OOP")
+    builder = GarminWorkoutBuilder(workout_name)
 
-    # To Twoje potencjalne wejście z innego pliku/zewnętrznego serwisu:
-    segments = [
-        ("warmup", "10min Rozgrzewka"),
-        ("interval", "2km 125-138bpm"),                  # Teraz 125-138 pójdzie jako TARGET, a notatka będzie pusta!
-        ("recovery", "2min Odpoczynek po interwale"),
-        ("interval", "2km 145-155bpm Trzeci zakres"),    # Tutaj będzie poprawny target HR, a notatką zostanie tylko "Trzeci zakres"
-        ("cooldown", "2km")
-    ]
-
-    for step_type, text in segments:
+    # Parsowanie surowego tekstu linijka po linijce
+    for line in raw_workout_code.strip().split('\n'):
+        if ',' not in line:
+            continue
+        step_type, text = line.split(',', 1)
         parsed_step = parser.parse(step_type, text)
         builder.add_step(parsed_step)
 
-    final_workout_json = builder.get_payload()
-    manager.upload_workout(final_workout_json)
+    manager.upload_workout(builder.get_payload())
 
 if __name__ == "__main__":
     main()
