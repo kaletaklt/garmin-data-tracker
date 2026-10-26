@@ -135,36 +135,31 @@ def main():
         print("Brak kodu treningu w zmiennej WORKOUT_CODE.")
         return
 
-    target_date = None
-    workout_name = "Nowy Trening z GitHuba"
-    segments_to_process = []
-
-    # Wyciąganie daty, nazwy i segmentów biegowych z podanego tekstu
-    for line in raw_workout_code.strip().split('\n'):
-        line = line.strip()
-        if not line:
-            continue
-            
-        if line.lower().startswith("date:"):
-            target_date = line.split(":", 1)[1].strip()
-        elif line.lower().startswith("name:"):
-            workout_name = line.split(":", 1)[1].strip()
-        elif ',' in line:
-            step_type, text = line.split(',', 1)
-            segments_to_process.append((step_type, text))
-
-    if not target_date:
-        print("Błąd: Nie podano daty w bloku tekstu. Wklej 'date: YYYY-MM-DD' na samym początku.")
+    # Usunięcie pustych linii i podział tekstu na linijki
+    lines = [line.strip() for line in raw_workout_code.strip().split('\n') if line.strip()]
+    
+    if len(lines) < 3:
+        print("Błąd: Za mało danych. Format to:\nData (YYYY-MM-DD)\nNazwa\nSegmenty...")
         return
+
+    # Sztywna interpretacja wklejonego tekstu
+    target_date = lines[0]
+    workout_name = lines[1]
+    segments_to_process = lines[2:]
 
     garmin_client = GarminAuthenticator().login()
     manager = WorkoutManager(garmin_client)
     parser = WorkoutStepParser()
     builder = GarminWorkoutBuilder(workout_name)
 
-    for step_type, text in segments_to_process:
-        parsed_step = parser.parse(step_type, text)
-        builder.add_step(parsed_step)
+    # Przetwarzanie segmentów od trzeciej linijki w dół
+    for line in segments_to_process:
+        if ',' in line:
+            step_type, text = line.split(',', 1)
+            parsed_step = parser.parse(step_type, text)
+            builder.add_step(parsed_step)
+        else:
+            print(f"Pominięto błędny segment (brak przecinka): {line}")
 
     manager.upload_and_schedule(builder.get_payload(), target_date)
 
