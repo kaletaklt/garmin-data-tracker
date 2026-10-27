@@ -1,7 +1,7 @@
 import re
 import os
 import sys
-import garth  # Omijamy garminconnect i korzystamy bezpośrednio z głównej biblioteki sesji!
+# Usunięto złośliwy import, który powodował błąd środowiska
 from garmin_auth import GarminAuthenticator
 
 class WorkoutStepParser:
@@ -43,7 +43,6 @@ class WorkoutStepParser:
             hr1 = int(hr_match.group(1))
             hr2 = int(hr_match.group(2))
             parsed["target_type"] = "heart.rate.bpm"
-            # Garmin wymaga rosnących wartości
             parsed["target_value_1"] = min(hr1, hr2)
             parsed["target_value_2"] = max(hr1, hr2)
             parsed["description"] = self.hr_re.sub('', parsed["description"]).strip()
@@ -101,7 +100,6 @@ class GarminWorkoutBuilder:
             "description": parsed_data["description"]
         }
 
-        # Wstrzykujemy target wyłącznie jeśli istnieje, by nie drażnić API Garmina
         if parsed_data["target_type"] != "no.target":
             step["targetType"] = {
                 "workoutTargetTypeId": target_map.get(parsed_data["target_type"], 1),
@@ -123,21 +121,44 @@ class GarminWorkoutBuilder:
 
 class WorkoutManager:
     def __init__(self, garmin_client):
-        self.client = garmin_client # Obiekt autoryzacji podtrzymujący sesję
+        self.client = garmin_client
 
     def _post_garmin_api(self, url_path: str, payload: dict):
-        """Wysyła surowe żądanie HTTP przez globalną, już zautoryzowaną sesję garth."""
-        try:
-            # Upewniamy się, że url zaczyna się od '/'
-            if not url_path.startswith('/'):
-                url_path = '/' + url_path
+        """Uniwersalna metoda skanująca klienta by odnaleźć autoryzowaną sesję HTTP."""
+        
+        # 1. Jeżeli używamy nowej biblioteki opartej na garth, korzystamy z zagnieżdżonego klienta
+        if hasattr(self.client, "garth"):
+            garth_obj = getattr(self.client, "garth")
+            if hasattr(garth_obj, "client"):
+                try:
+                    res = garth_obj.client.post("connect", url_path, json=payload)
+                    return res if isinstance(res, dict) else (res.json() if hasattr(res, "json") else res)
+                except Exception as e:
+                    print(f"Zignorowano błąd garth-client: {e}")
+
+        # 2. Jeżeli używamy innych wersji (skanowanie w poszukiwaniu obiektu sesji np. requests.Session)
+        url = f"https://connect.garmin.com{url_path}"
+        headers = getattr(self.client, "headers", {})
+        
+        for attr_name in dir(self.client):
+            if attr_name.startswith("__"): 
+                continue
             
-            return garth.client.post("connect", url_path, json=payload)
-        except Exception as e:
-            # Garth HTTP Error często zawiera w sobie powód odrzucenia przez Garmina
-            if hasattr(e, 'response') and hasattr(e.response, 'text'):
-                print(f"API Garmina odrzuciło żądanie. Kod błędu: {e.response.status_code}. Treść: {e.response.text}")
-            raise e
+            attr = getattr(self.client, attr_name)
+            if hasattr(attr, "post") and callable(getattr(attr, "post")):
+                try:
+                    res = attr.post(url, headers=headers, json=payload)
+                    # Wychwytujemy poprawne kody statusu (200, 204 itp.)
+                    if hasattr(res, "status_code") and 200 <= res.status_code < 400:
+                        return res.json() if getattr(res, "text", "") else {}
+                    elif hasattr(res, "status_code"):
+                        print(f"Odrzucono żądanie {url_path}. Status: {res.status_code}. Błąd: {res.text}")
+                except Exception:
+                    pass
+
+        # Jeśli skrypt doszedł tutaj, wyświetli w logach, czym naprawdę jest Twój garmin_client
+        available_attrs = [m for m in dir(self.client) if not m.startswith('__')]
+        raise Exception(f"Błąd krytyczny: Skrypt nie odnalazł sesji POST. Dostępne zmienne w Twoim kliencie to: {available_attrs}")
 
     def upload_and_schedule(self, workout_payload: dict, target_date: str):
         try:
@@ -148,8 +169,6 @@ class WorkoutManager:
             workout_id = None
             if isinstance(response, dict):
                 workout_id = response.get("workoutId")
-            elif hasattr(response, 'json'):
-                workout_id = response.json().get("workoutId")
             
             if not workout_id:
                 print(f"ODPOWIEDŹ Z SERWERA GARMIN: {response}")
@@ -157,12 +176,11 @@ class WorkoutManager:
             
             print(f"Trening pomyślnie zapisany (ID: {workout_id}). Przypisywanie do kalendarza na dzień {target_date}...")
             
-            # Wysłanie żądania przypisania do kalendarza
             self._post_garmin_api(f"/workout-service/schedule/{workout_id}", {"date": target_date})
             print(f"SUKCES! Trening dodano i przypisano do kalendarza na dzień: {target_date}")
             
         except Exception as e:
-            print(f"Błąd krytyczny komunikacji z API: {e}")
+            print(f"Błąd komunikacji z API Garmina: {e}")
             sys.exit(1)
 
 
