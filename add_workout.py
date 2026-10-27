@@ -1,7 +1,6 @@
 import re
 import os
 import sys
-# Usunięto złośliwy import, który powodował błąd środowiska
 from garmin_auth import GarminAuthenticator
 
 class WorkoutStepParser:
@@ -123,66 +122,46 @@ class WorkoutManager:
     def __init__(self, garmin_client):
         self.client = garmin_client
 
-    def _post_garmin_api(self, url_path: str, payload: dict):
-        """Uniwersalna metoda skanująca klienta by odnaleźć autoryzowaną sesję HTTP."""
-        
-        # 1. Jeżeli używamy nowej biblioteki opartej na garth, korzystamy z zagnieżdżonego klienta
-        if hasattr(self.client, "garth"):
-            garth_obj = getattr(self.client, "garth")
-            if hasattr(garth_obj, "client"):
-                try:
-                    res = garth_obj.client.post("connect", url_path, json=payload)
-                    return res if isinstance(res, dict) else (res.json() if hasattr(res, "json") else res)
-                except Exception as e:
-                    print(f"Zignorowano błąd garth-client: {e}")
-
-        # 2. Jeżeli używamy innych wersji (skanowanie w poszukiwaniu obiektu sesji np. requests.Session)
-        url = f"https://connect.garmin.com{url_path}"
-        headers = getattr(self.client, "headers", {})
-        
-        for attr_name in dir(self.client):
-            if attr_name.startswith("__"): 
-                continue
-            
-            attr = getattr(self.client, attr_name)
-            if hasattr(attr, "post") and callable(getattr(attr, "post")):
-                try:
-                    res = attr.post(url, headers=headers, json=payload)
-                    # Wychwytujemy poprawne kody statusu (200, 204 itp.)
-                    if hasattr(res, "status_code") and 200 <= res.status_code < 400:
-                        return res.json() if getattr(res, "text", "") else {}
-                    elif hasattr(res, "status_code"):
-                        print(f"Odrzucono żądanie {url_path}. Status: {res.status_code}. Błąd: {res.text}")
-                except Exception:
-                    pass
-
-        # Jeśli skrypt doszedł tutaj, wyświetli w logach, czym naprawdę jest Twój garmin_client
-        available_attrs = [m for m in dir(self.client) if not m.startswith('__')]
-        raise Exception(f"Błąd krytyczny: Skrypt nie odnalazł sesji POST. Dostępne zmienne w Twoim kliencie to: {available_attrs}")
-
     def upload_and_schedule(self, workout_payload: dict, target_date: str):
         try:
             print(f"Zapisywanie treningu: '{workout_payload['workoutName']}' w bibliotece Garmina...")
             
-            response = self._post_garmin_api("/workout-service/workout", workout_payload)
+            # Właściwe wywołanie natywnych metod z biblioteki garminconnect
+            response = self.client.upload_workout(workout_payload)
             
             workout_id = None
             if isinstance(response, dict):
                 workout_id = response.get("workoutId")
+            elif hasattr(response, 'json'):
+                try:
+                    workout_id = response.json().get("workoutId")
+                except Exception:
+                    pass
             
+            # Zabezpieczenie: jeśli API przyjęło trening, ale "połknęło" odpowiedź i nie zwróciło ID
             if not workout_id:
-                print(f"ODPOWIEDŹ Z SERWERA GARMIN: {response}")
-                raise ValueError("Serwer Garmina przyjął JSON-a, ale nie zwrócił ID treningu.")
-            
+                print("Brak bezpośredniego zwrotu ID. Zaciąganie listy treningów w celu zlokalizowania...")
+                try:
+                    workouts = self.client.get_workouts()
+                    for w in workouts:
+                        if w.get("workoutName") == workout_payload["workoutName"]:
+                            workout_id = w.get("workoutId")
+                            break
+                except Exception as e:
+                    print(f"Nie udało się pobrać listy treningów: {e}")
+                    
+            if not workout_id:
+                raise ValueError("Serwer przyjął trening, ale nie udało się odzyskać jego ID potrzebnego do kalendarza.")
+                
             print(f"Trening pomyślnie zapisany (ID: {workout_id}). Przypisywanie do kalendarza na dzień {target_date}...")
             
-            self._post_garmin_api(f"/workout-service/schedule/{workout_id}", {"date": target_date})
+            # Zaplanowanie treningu
+            self.client.schedule_workout(workout_id, target_date)
             print(f"SUKCES! Trening dodano i przypisano do kalendarza na dzień: {target_date}")
             
         except Exception as e:
-            print(f"Błąd komunikacji z API Garmina: {e}")
+            print(f"Błąd krytyczny komunikacji z API Garmina: {e}")
             sys.exit(1)
-
 
 def main():
     raw_workout_code = os.getenv("WORKOUT_CODE", "")
