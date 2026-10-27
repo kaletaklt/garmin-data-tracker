@@ -8,7 +8,8 @@ class WorkoutStepParser:
         self.dist_re = re.compile(r'(\d+(?:\.\d+)?)\s*(km|m)\b', re.IGNORECASE)
         self.time_re = re.compile(r'(\d+(?:\.\d+)?)\s*(min|s|sek)\b', re.IGNORECASE)
         self.hr_re = re.compile(r'(\d+)\s*-\s*(\d+)\s*bpm', re.IGNORECASE)
-        self.pace_re = re.compile(r'(\d+):(\d{2})\s*-\s*(\d+):(\d{2})\s*min/km', re.IGNORECASE)
+        # Poprawiony regex tempa – elastycznie obsługuje spacje i brak spacji przed min/km
+        self.pace_re = re.compile(r'(\d+):(\d{2})\s*-\s*(\d+):(\d{2})\s*(?:min/km)?', re.IGNORECASE)
 
     def parse(self, step_type: str, text: str) -> dict:
         parsed = {
@@ -58,7 +59,8 @@ class WorkoutStepParser:
                 parsed["target_value_1"] = min(v1, v2)
                 parsed["target_value_2"] = max(v1, v2)
             
-            parsed["description"] = self.pace_re.sub('', parsed["description"]).strip()
+            # Bezpieczne usunięcie zapisu tempa oraz napisu min/km z notatki
+            parsed["description"] = re.sub(r'\d+:\d{2}\s*-\s*\d+:\d{2}\s*(?:min/km)?', '', parsed["description"]).strip()
 
         parsed["description"] = re.sub(r'\s+', ' ', parsed["description"]).strip()
         if not parsed["description"]:
@@ -126,7 +128,6 @@ class WorkoutManager:
         try:
             print(f"Zapisywanie treningu: '{workout_payload['workoutName']}' w bibliotece Garmina...")
             
-            # Właściwe wywołanie natywnych metod z biblioteki garminconnect
             response = self.client.upload_workout(workout_payload)
             
             workout_id = None
@@ -138,7 +139,6 @@ class WorkoutManager:
                 except Exception:
                     pass
             
-            # Zabezpieczenie: jeśli API przyjęło trening, ale "połknęło" odpowiedź i nie zwróciło ID
             if not workout_id:
                 print("Brak bezpośredniego zwrotu ID. Zaciąganie listy treningów w celu zlokalizowania...")
                 try:
@@ -155,13 +155,13 @@ class WorkoutManager:
                 
             print(f"Trening pomyślnie zapisany (ID: {workout_id}). Przypisywanie do kalendarza na dzień {target_date}...")
             
-            # Zaplanowanie treningu
             self.client.schedule_workout(workout_id, target_date)
-            print(f"SUKCES! Trening dodano i przypisano do kalendarza na dzień: {target_date}")
+            print(f"SUKCES! Trening dodano i przypisano na dzień: {target_date}")
             
         except Exception as e:
             print(f"Błąd krytyczny komunikacji z API Garmina: {e}")
             sys.exit(1)
+
 
 def main():
     raw_workout_code = os.getenv("WORKOUT_CODE", "")
