@@ -112,11 +112,28 @@ class WorkoutManager:
     def __init__(self, garmin_client):
         self.client = garmin_client
 
+    def _post_garmin_api(self, url_path: str, payload: dict):
+        """Wysyła surowe żądanie HTTP do backendu Garmina, omijając braki w garminconnect."""
+        # 1. Nowsze wersje (garth)
+        if hasattr(self.client, "garth"):
+            return self.client.garth.client.post("connect", url_path, json=payload)
+        
+        # 2. Starsze wersje (requests.Session)
+        url = f"https://connect.garmin.com{url_path}"
+        session = getattr(self.client, "session", getattr(self.client, "req", None))
+        if session:
+            res = session.post(url, headers=getattr(self.client, "headers", {}), json=payload)
+            res.raise_for_status()
+            return res.json()
+            
+        raise Exception("Nie można odnaleźć sesji uwierzytelniającej HTTP w kliencie Garmin.")
+
     def upload_and_schedule(self, workout_payload: dict, target_date: str):
         try:
             print(f"Zapisywanie treningu: '{workout_payload['workoutName']}' w bibliotece Garmina...")
             
-            response = self.client.add_workout(workout_payload)
+            # Właściwe wysłanie treningu
+            response = self._post_garmin_api("/workout-service/workout", workout_payload)
             
             workout_id = None
             if isinstance(response, dict):
@@ -127,12 +144,11 @@ class WorkoutManager:
                 raise ValueError("Serwer Garmina odrzucił JSON-a (brak ID).")
             
             print(f"Trening pomyślnie zapisany w bibliotece (ID: {workout_id}). Przypisywanie do kalendarza na dzień {target_date}...")
-            self.client.schedule_workout(workout_id, target_date)
+            
+            # Zaplanowanie treningu w kalendarzu
+            self._post_garmin_api(f"/workout-service/schedule/{workout_id}", {"date": target_date})
             print(f"SUKCES! Trening dodano i przypisano na dzień: {target_date}")
             
-        except AttributeError as ae:
-            print(f"Błąd metody: Twoja wersja biblioteki garminconnect nie obsługuje danej funkcji: {ae}")
-            sys.exit(1)
         except Exception as e:
             print(f"Błąd krytyczny komunikacji z API: {e}")
             sys.exit(1)
