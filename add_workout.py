@@ -1,6 +1,7 @@
 import re
 import os
 import sys
+import garth  # Omijamy garminconnect i korzystamy bezpośrednio z głównej biblioteki sesji!
 from garmin_auth import GarminAuthenticator
 
 class WorkoutStepParser:
@@ -39,9 +40,12 @@ class WorkoutStepParser:
 
         hr_match = self.hr_re.search(parsed["description"])
         if hr_match:
+            hr1 = int(hr_match.group(1))
+            hr2 = int(hr_match.group(2))
             parsed["target_type"] = "heart.rate.bpm"
-            parsed["target_value_1"] = int(hr_match.group(1))
-            parsed["target_value_2"] = int(hr_match.group(2))
+            # Garmin wymaga rosnących wartości
+            parsed["target_value_1"] = min(hr1, hr2)
+            parsed["target_value_2"] = max(hr1, hr2)
             parsed["description"] = self.hr_re.sub('', parsed["description"]).strip()
 
         pace_match = self.pace_re.search(parsed["description"])
@@ -51,8 +55,10 @@ class WorkoutStepParser:
             sec_per_km_2 = int(pace_match.group(3)) * 60 + int(pace_match.group(4))
             
             if sec_per_km_1 > 0 and sec_per_km_2 > 0:
-                parsed["target_value_1"] = round(1000.0 / sec_per_km_1, 3) 
-                parsed["target_value_2"] = round(1000.0 / sec_per_km_2, 3) 
+                v1 = round(1000.0 / sec_per_km_1, 3) 
+                v2 = round(1000.0 / sec_per_km_2, 3) 
+                parsed["target_value_1"] = min(v1, v2)
+                parsed["target_value_2"] = max(v1, v2)
             
             parsed["description"] = self.pace_re.sub('', parsed["description"]).strip()
 
@@ -92,14 +98,21 @@ class GarminWorkoutBuilder:
                 "conditionTypeKey": parsed_data["condition_type"]
             },
             "endConditionValue": parsed_data["condition_value"],
-            "targetType": {
-                "workoutTargetTypeId": target_map.get(parsed_data["target_type"], 1),
-                "workoutTargetTypeKey": parsed_data["target_type"]
-            },
-            "targetValueOne": parsed_data["target_value_1"],
-            "targetValueTwo": parsed_data["target_value_2"],
             "description": parsed_data["description"]
         }
+
+        # Wstrzykujemy target wyłącznie jeśli istnieje, by nie drażnić API Garmina
+        if parsed_data["target_type"] != "no.target":
+            step["targetType"] = {
+                "workoutTargetTypeId": target_map.get(parsed_data["target_type"], 1),
+                "workoutTargetTypeKey": parsed_data["target_type"]
+            }
+            step["targetValueOne"] = parsed_data["target_value_1"]
+            step["targetValueTwo"] = parsed_data["target_value_2"]
+        else:
+            step["targetType"] = None
+            step["targetValueOne"] = None
+            step["targetValueTwo"] = None
 
         self.workout["workoutSegments"][0]["workoutSteps"].append(step)
         self.step_order += 1
@@ -110,44 +123,43 @@ class GarminWorkoutBuilder:
 
 class WorkoutManager:
     def __init__(self, garmin_client):
-        self.client = garmin_client
+        self.client = garmin_client # Obiekt autoryzacji podtrzymujący sesję
 
     def _post_garmin_api(self, url_path: str, payload: dict):
-        """Wysyła surowe żądanie HTTP do backendu Garmina, omijając braki w garminconnect."""
-        # 1. Nowsze wersje (garth)
-        if hasattr(self.client, "garth"):
-            return self.client.garth.client.post("connect", url_path, json=payload)
-        
-        # 2. Starsze wersje (requests.Session)
-        url = f"https://connect.garmin.com{url_path}"
-        session = getattr(self.client, "session", getattr(self.client, "req", None))
-        if session:
-            res = session.post(url, headers=getattr(self.client, "headers", {}), json=payload)
-            res.raise_for_status()
-            return res.json()
+        """Wysyła surowe żądanie HTTP przez globalną, już zautoryzowaną sesję garth."""
+        try:
+            # Upewniamy się, że url zaczyna się od '/'
+            if not url_path.startswith('/'):
+                url_path = '/' + url_path
             
-        raise Exception("Nie można odnaleźć sesji uwierzytelniającej HTTP w kliencie Garmin.")
+            return garth.client.post("connect", url_path, json=payload)
+        except Exception as e:
+            # Garth HTTP Error często zawiera w sobie powód odrzucenia przez Garmina
+            if hasattr(e, 'response') and hasattr(e.response, 'text'):
+                print(f"API Garmina odrzuciło żądanie. Kod błędu: {e.response.status_code}. Treść: {e.response.text}")
+            raise e
 
     def upload_and_schedule(self, workout_payload: dict, target_date: str):
         try:
             print(f"Zapisywanie treningu: '{workout_payload['workoutName']}' w bibliotece Garmina...")
             
-            # Właściwe wysłanie treningu
             response = self._post_garmin_api("/workout-service/workout", workout_payload)
             
             workout_id = None
             if isinstance(response, dict):
                 workout_id = response.get("workoutId")
+            elif hasattr(response, 'json'):
+                workout_id = response.json().get("workoutId")
             
             if not workout_id:
                 print(f"ODPOWIEDŹ Z SERWERA GARMIN: {response}")
-                raise ValueError("Serwer Garmina odrzucił JSON-a (brak ID).")
+                raise ValueError("Serwer Garmina przyjął JSON-a, ale nie zwrócił ID treningu.")
             
-            print(f"Trening pomyślnie zapisany w bibliotece (ID: {workout_id}). Przypisywanie do kalendarza na dzień {target_date}...")
+            print(f"Trening pomyślnie zapisany (ID: {workout_id}). Przypisywanie do kalendarza na dzień {target_date}...")
             
-            # Zaplanowanie treningu w kalendarzu
+            # Wysłanie żądania przypisania do kalendarza
             self._post_garmin_api(f"/workout-service/schedule/{workout_id}", {"date": target_date})
-            print(f"SUKCES! Trening dodano i przypisano na dzień: {target_date}")
+            print(f"SUKCES! Trening dodano i przypisano do kalendarza na dzień: {target_date}")
             
         except Exception as e:
             print(f"Błąd krytyczny komunikacji z API: {e}")
