@@ -67,7 +67,6 @@ class GarminWorkoutBuilder:
     def __init__(self, workout_name: str, sport="running"):
         self.workout = {
             "workoutName": workout_name,
-            # Wymagany przez API Garmina format sportType (bez tego odrzuca JSON-a!)
             "sportType": {
                 "sportTypeId": 1,
                 "sportTypeKey": sport
@@ -116,3 +115,68 @@ class WorkoutManager:
     def upload_and_schedule(self, workout_payload: dict, target_date: str):
         try:
             print(f"Zapisywanie treningu: '{workout_payload['workoutName']}' w bibliotece Garmina...")
+            
+            response = self.client.add_workout(workout_payload)
+            
+            workout_id = None
+            if isinstance(response, dict):
+                workout_id = response.get("workoutId")
+            
+            if not workout_id:
+                print(f"ODPOWIEDŹ Z SERWERA GARMIN: {response}")
+                raise ValueError("Serwer Garmina odrzucił JSON-a (brak ID).")
+            
+            print(f"Trening pomyślnie zapisany w bibliotece (ID: {workout_id}). Przypisywanie do kalendarza na dzień {target_date}...")
+            self.client.schedule_workout(workout_id, target_date)
+            print(f"SUKCES! Trening dodano i przypisano na dzień: {target_date}")
+            
+        except AttributeError as ae:
+            print(f"Błąd metody: Twoja wersja biblioteki garminconnect nie obsługuje danej funkcji: {ae}")
+            sys.exit(1)
+        except Exception as e:
+            print(f"Błąd krytyczny komunikacji z API: {e}")
+            sys.exit(1)
+
+
+def main():
+    raw_workout_code = os.getenv("WORKOUT_CODE", "")
+    
+    if not raw_workout_code:
+        print("Błąd: Brak kodu treningu. Puste pole.")
+        sys.exit(1)
+
+    parts = re.split(r'\b(warmup|interval|recovery|cooldown)\s*,', raw_workout_code, flags=re.IGNORECASE)
+    
+    if len(parts) < 3:
+        print("Błąd: Nie rozpoznano segmentów. Oczekiwano identyfikatorów np. 'warmup,' lub 'interval,'.")
+        sys.exit(1)
+
+    prefix = parts[0].strip()
+    date_match = re.search(r'\b(\d{4}-\d{2}-\d{2})\b', prefix)
+    
+    if not date_match:
+        print("Błąd: Nie znaleziono daty w formacie YYYY-MM-DD.")
+        sys.exit(1)
+        
+    target_date = date_match.group(1)
+    workout_name = prefix.replace(target_date, '').strip()
+    
+    if not workout_name:
+        workout_name = "Nowy Trening Biegowy"
+
+    garmin_client = GarminAuthenticator().login()
+    manager = WorkoutManager(garmin_client)
+    parser = WorkoutStepParser()
+    builder = GarminWorkoutBuilder(workout_name)
+
+    for i in range(1, len(parts), 2):
+        step_type = parts[i].lower()
+        text = parts[i+1]
+        parsed_step = parser.parse(step_type, text)
+        builder.add_step(parsed_step)
+
+    manager.upload_and_schedule(builder.get_payload(), target_date)
+
+
+if __name__ == "__main__":
+    main()
