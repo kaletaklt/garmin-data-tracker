@@ -8,8 +8,10 @@ class WorkoutStepParser:
         self.dist_re = re.compile(r'(\d+(?:\.\d+)?)\s*(km|m)\b', re.IGNORECASE)
         self.time_re = re.compile(r'(\d+(?:\.\d+)?)\s*(min|s|sek)\b', re.IGNORECASE)
         self.hr_re = re.compile(r'(\d+)\s*-\s*(\d+)\s*bpm', re.IGNORECASE)
-        # Poprawiony regex tempa – elastycznie obsługuje spacje i brak spacji przed min/km
-        self.pace_re = re.compile(r'(\d+):(\d{2})\s*-\s*(\d+):(\d{2})\s*(?:min/km)?', re.IGNORECASE)
+        
+        # Poprawiony, bardziej odporny regex tempa:
+        # Obsługuje pełny zapis (3:45-4:20) oraz ucięte/uproszczone warianty (np. 3:45-4:/km)
+        self.pace_re = re.compile(r'(\d+):(\d{2})\s*-\s*(\d+):(\d{0,2})\s*(?:min/km|/km)?', re.IGNORECASE)
 
     def parse(self, step_type: str, text: str) -> dict:
         parsed = {
@@ -50,8 +52,14 @@ class WorkoutStepParser:
         pace_match = self.pace_re.search(parsed["description"])
         if pace_match:
             parsed["target_type"] = "pace"
-            sec_per_km_1 = int(pace_match.group(1)) * 60 + int(pace_match.group(2))
-            sec_per_km_2 = int(pace_match.group(3)) * 60 + int(pace_match.group(4))
+            m1, s1 = int(pace_match.group(1)), int(pace_match.group(2))
+            m2, s2_str = pace_match.group(3), pace_match.group(4)
+            
+            # Bezpieczne obsłużenie pustych lub uciętych sekund (np. gdy zczyta "4:")
+            s2 = int(s2_str) if s2_str else 0
+            
+            sec_per_km_1 = m1 * 60 + s1
+            sec_per_km_2 = int(m2) * 60 + s2
             
             if sec_per_km_1 > 0 and sec_per_km_2 > 0:
                 v1 = round(1000.0 / sec_per_km_1, 3) 
@@ -59,8 +67,8 @@ class WorkoutStepParser:
                 parsed["target_value_1"] = min(v1, v2)
                 parsed["target_value_2"] = max(v1, v2)
             
-            # Bezpieczne usunięcie zapisu tempa oraz napisu min/km z notatki
-            parsed["description"] = re.sub(r'\d+:\d{2}\s*-\s*\d+:\d{2}\s*(?:min/km)?', '', parsed["description"]).strip()
+            # Dokładne oczyszczenie opisu z zapisu tempa i zbędnych końcówek typu /km lub min/km
+            parsed["description"] = re.sub(r'\d+:\d{0,2}\s*-\s*\d+:\d{0,2}\s*(?:min/km|/km)?', '', parsed["description"]).strip()
 
         parsed["description"] = re.sub(r'\s+', ' ', parsed["description"]).strip()
         if not parsed["description"]:
@@ -156,7 +164,7 @@ class WorkoutManager:
             print(f"Trening pomyślnie zapisany (ID: {workout_id}). Przypisywanie do kalendarza na dzień {target_date}...")
             
             self.client.schedule_workout(workout_id, target_date)
-            print(f"SUKCES! Trening dodano i przypisano na dzień: {target_date}")
+            print(f"SUKCES! Trening dodano i przypisano do kalendarza na dzień: {target_date}")
             
         except Exception as e:
             print(f"Błąd krytyczny komunikacji z API Garmina: {e}")
