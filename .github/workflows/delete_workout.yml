@@ -1,0 +1,33 @@
+name: Delete Garmin Workout
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: 'Data treningu (YYYY-MM-DD)'
+        required: true
+      workout_name:
+        description: 'Nazwa treningu'
+        required: true
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          
+      - name: Install dependencies
+        run: pip install garminconnect garth gspread
+          
+      - name: Run delete_workout.py
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          TARGET_DATE: ${{ github.event.inputs.target_date }}
+          WORKOUT_NAME: ${{ github.event.inputs.workout_name }}
+        run: python delete_workout.py
