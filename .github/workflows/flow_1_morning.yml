@@ -23,6 +23,7 @@ jobs:
           EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER }}
         run: |
           python garmin_auth.py
+          python sync_calendar.py
           python wellness_collector.py
           python gsheets_updater.py
           python alert_sender.py
