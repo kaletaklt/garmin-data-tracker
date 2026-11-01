@@ -1,0 +1,49 @@
+name: Garmin Daily Synchronization Loop
+
+on:
+  schedule:
+    # Uruchamianie codziennie o 06:00 UTC (07:00 w Polsce)
+    - cron: '0 6 * * *'
+  workflow_dispatch: # Umożliwia ręczne uruchomienie oraz wywołanie z Taskera
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repozytorium
+        uses: actions/checkout@v4
+
+      - name: Konfiguracja środowiska Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Instalacja zależności
+        run: |
+          python -m pip install --upgrade pip
+          pip install garminconnect garth gspread requests
+
+      - name: 1. Synchronizacja Wellness (Wczoraj i Dziś)
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
+        run: python sync_wellness.py
+
+      - name: 2. Synchronizacja Ostatnich Aktywności
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
+        run: python sync_activities.py
+
+      - name: 3. Synchronizacja Kalendarza i Treningów
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
+        run: python sync_calendar.py
