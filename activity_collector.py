@@ -14,7 +14,7 @@ class ActivityCollector:
     def __init__(self, garmin_client):
         self.client = garmin_client
 
-    def fetch_recent_activities(self, limit: int = 3000) -> list:
+    def fetch_recent_activities(self, limit: int = 100) -> list:
         """Pobiera określoną liczbę najnowszych aktywności z Garmin Connect."""
         try:
             print(f"Pobieranie bazy {limit} ostatnich aktywności z Garmina...")
@@ -93,13 +93,13 @@ def main():
     updater = GSheetsUpdater(spreadsheet_id=sheet_id, sheet_name="Aktywnosci")
 
     # 2. Pobranie ostatnich aktywności
-    activities = collector.fetch_recent_activities(limit=3000)
+    activities = collector.fetch_recent_activities(limit=100)
     if not activities:
         print("Brak aktywności do przetworzenia.")
         return
     
     # 3. Ustalenie okresu synchronizacji (30 dni)
-    cutoff_date = datetime.date.today() - datetime.timedelta(days=3000)
+    cutoff_date = datetime.date.today() - datetime.timedelta(days=30)
     print(f"Analiza treningów po dacie: {cutoff_date}...")
     
     # 4. Przetwarzanie i wysyłanie danych w kolejności chronologicznej (od najstarszej)
