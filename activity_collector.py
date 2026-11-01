@@ -1,9 +1,9 @@
 import os
 import datetime
+import time
 from garmin_auth import GarminAuthenticator
 from gsheets_updater import GSheetsUpdater
 
-# Zdefiniowanie typów aktywności stacjonarnych jako stałej, aby nie obciążać pętli
 NON_DISTANCE_TYPES = {
     "strength_training", "yoga", "pilates", "meditation", 
     "breathwork", "stretching", "indoor_cardio", "fitness_equipment",
@@ -14,34 +14,58 @@ class ActivityCollector:
     def __init__(self, garmin_client):
         self.client = garmin_client
 
-    def fetch_recent_activities(self, limit: int = 100) -> list:
-        """Pobiera określoną liczbę najnowszych aktywności z Garmin Connect."""
-        try:
-            print(f"Pobieranie bazy {limit} ostatnich aktywności z Garmina...")
-            return self.client.get_activities(0, limit)
-        except Exception as e:
-            print(f"Błąd pobierania aktywności: {e}")
-            return []
+    def fetch_activities_until(self, cutoff_date: datetime.date) -> list:
+        """Pobiera aktywności partiami, cofając się do podanej daty."""
+        all_activities = []
+        start = 0
+        limit = 100
+        
+        print(f"Pobieranie historii partiami (po {limit} sztuk) do daty {cutoff_date}...")
+        
+        while True:
+            try:
+                print(f"Pobieranie od indeksu {start}...")
+                chunk = self.client.get_activities(start, limit)
+                
+                if not chunk:
+                    break
+                    
+                all_activities.extend(chunk)
+                
+                # Weryfikacja daty najstarszego treningu w pobranej paczce
+                oldest_in_chunk_str = chunk[-1].get("startTimeLocal", "")[:10]
+                if oldest_in_chunk_str:
+                    try:
+                        oldest_date = datetime.datetime.strptime(oldest_in_chunk_str, "%Y-%m-%d").date()
+                        if oldest_date < cutoff_date:
+                            print("Osiągnięto limit daty. Kończenie pobierania.")
+                            break
+                    except ValueError:
+                        pass
+                
+                start += limit
+                time.sleep(2) # Bezpieczne opóźnienie, aby nie zablokować API
+                
+            except Exception as e:
+                print(f"Błąd pobierania partii: {e}")
+                break
+                
+        return all_activities
 
     @staticmethod
     def _round_safe(val, digits=2):
-        """Bezpiecznie zaokrągla wartości liczbowe, omijając puste pola i None."""
         return round(val, digits) if isinstance(val, (int, float)) else ""
 
     def extract_activity_data(self, activity: dict) -> list:
-        """Mapuje surowy JSON aktywności na wiersz w formacie Google Sheets."""
-
         type_info = activity.get("activityType", {})
         type_key = type_info.get("typeKey", type_info.get("typeId", ""))
 
-        # Wykluczenie dystansu dla stacjonarnych aktywności
         distance_val = ""
         if type_key not in NON_DISTANCE_TYPES:
             dist = activity.get("distance")
             if dist:
                 distance_val = self._round_safe(dist / 1000)
 
-        # Pobieranie specyficznych metryk, zabezpieczone na wypadek różnego nazewnictwa kluczy
         training_load = activity.get("activityTrainingLoad", activity.get("trainingLoad", ""))
         left_balance = activity.get("avgGroundContactBalance", activity.get("avgLeftBalance", activity.get("leftBalance", "")))
         avg_power = activity.get("avgPower", activity.get("averagePower", ""))
@@ -49,7 +73,6 @@ class ActivityCollector:
         avg_temp = activity.get("avgTemperature", activity.get("averageTemperature", ""))
         vo2_max = activity.get("vO2MaxValue", activity.get("vo2MaxValue", ""))
 
-        # Formatowanie balansu z ułamka np. 50.5 na 50,5
         if isinstance(left_balance, (float, int)):
             left_balance = round(left_balance, 2)
 
@@ -81,8 +104,8 @@ class ActivityCollector:
             avg_temp
         ]
 
+
 def main():
-    # 1. Autoryzacja i inicjalizacja usług
     garmin_client = GarminAuthenticator().login()
     collector = ActivityCollector(garmin_client)
 
@@ -93,23 +116,20 @@ def main():
     updater = GSheetsUpdater(spreadsheet_id=sheet_id, sheet_name="Aktywnosci")
 
     # ==============================================================================
-    # KONFIGURACJA ZAKRESU POBIERANIA (Zmień po jednorazowym zassaniu historii)
+    # KONFIGURACJA ZAKRESU POBIERANIA
     # ==============================================================================
-    # Tryb "Wielka Paczka" (Cała historia): limit = 2000, cutoff = date(2022, 4, 1)
-    # Tryb "Codzienny": limit = 10, cutoff = date.today() - timedelta(days=7)
+    # 1. Aby zassać wszystko od 2022: cutoff_date = datetime.date(2022, 4, 1)
+    # 2. Po jednorazowym pobraniu zmień na: cutoff_date = datetime.date.today() - datetime.timedelta(days=7)
     # ==============================================================================
-    LIMIT_AKTYWNOSCI = 2000
     cutoff_date = datetime.date(2022, 4, 1)
 
-    # 2. Pobranie aktywności
-    activities = collector.fetch_recent_activities(limit=LIMIT_AKTYWNOSCI)
+    activities = collector.fetch_activities_until(cutoff_date=cutoff_date)
     if not activities:
         print("Brak aktywności do przetworzenia.")
         return
 
-    print(f"Analiza treningów po dacie: {cutoff_date}...")
+    print(f"Rozpoczynam zapis {len(activities)} aktywności do Google Sheets...")
 
-    # 3. Przetwarzanie i wysyłanie danych w kolejności chronologicznej (od najstarszej)
     for activity in reversed(activities):
         activity_id = str(activity.get("activityId", ""))
         start_date_str = activity.get("startTimeLocal", "")[:10]
@@ -122,7 +142,6 @@ def main():
             if act_date < cutoff_date:
                 continue
         except ValueError:
-            print(f"Pominięto błędny format daty dla aktywności {activity_id}.")
             continue
 
         row = collector.extract_activity_data(activity)
