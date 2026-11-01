@@ -30,10 +30,10 @@ class ActivityCollector:
 
     def extract_activity_data(self, activity: dict) -> list:
         """Mapuje surowy JSON aktywności na wiersz w formacie Google Sheets."""
-        
+
         type_info = activity.get("activityType", {})
         type_key = type_info.get("typeKey", type_info.get("typeId", ""))
-        
+
         # Wykluczenie dystansu dla stacjonarnych aktywności
         distance_val = ""
         if type_key not in NON_DISTANCE_TYPES:
@@ -85,31 +85,38 @@ def main():
     # 1. Autoryzacja i inicjalizacja usług
     garmin_client = GarminAuthenticator().login()
     collector = ActivityCollector(garmin_client)
-    
+
     sheet_id = os.getenv("GOOGLE_SHEET_ID")
     if not sheet_id:
         raise ValueError("Brak klucza GOOGLE_SHEET_ID w zmiennych środowiskowych.")
-        
+
     updater = GSheetsUpdater(spreadsheet_id=sheet_id, sheet_name="Aktywnosci")
 
-    # 2. Pobranie ostatnich aktywności
-    activities = collector.fetch_recent_activities(limit=100)
+    # ==============================================================================
+    # KONFIGURACJA ZAKRESU POBIERANIA (Zmień po jednorazowym zassaniu historii)
+    # ==============================================================================
+    # Tryb "Wielka Paczka" (Cała historia): limit = 2000, cutoff = date(2022, 4, 1)
+    # Tryb "Codzienny": limit = 10, cutoff = date.today() - timedelta(days=7)
+    # ==============================================================================
+    LIMIT_AKTYWNOSCI = 2000
+    cutoff_date = datetime.date(2022, 4, 1)
+
+    # 2. Pobranie aktywności
+    activities = collector.fetch_recent_activities(limit=LIMIT_AKTYWNOSCI)
     if not activities:
         print("Brak aktywności do przetworzenia.")
         return
-    
-    # 3. Ustalenie okresu synchronizacji (30 dni)
-    cutoff_date = datetime.date.today() - datetime.timedelta(days=30)
+
     print(f"Analiza treningów po dacie: {cutoff_date}...")
-    
-    # 4. Przetwarzanie i wysyłanie danych w kolejności chronologicznej (od najstarszej)
+
+    # 3. Przetwarzanie i wysyłanie danych w kolejności chronologicznej (od najstarszej)
     for activity in reversed(activities):
         activity_id = str(activity.get("activityId", ""))
         start_date_str = activity.get("startTimeLocal", "")[:10]
-        
+
         if not activity_id or not start_date_str:
             continue
-            
+
         try:
             act_date = datetime.datetime.strptime(start_date_str, "%Y-%m-%d").date()
             if act_date < cutoff_date:
@@ -117,7 +124,7 @@ def main():
         except ValueError:
             print(f"Pominięto błędny format daty dla aktywności {activity_id}.")
             continue
-            
+
         row = collector.extract_activity_data(activity)
         updater.upsert_row(identifier=activity_id, col_index=1, row_data=row)
 
