@@ -1,9 +1,6 @@
 name: Garmin Daily Synchronization Loop
 
 on:
-  schedule:
-    # Uruchamianie codziennie o 06:00 UTC (07:00 w Polsce)
-    - cron: '0 6 * * *'
   workflow_dispatch: # Umożliwia ręczne uruchomienie oraz wywołanie z Taskera
 
 jobs:
