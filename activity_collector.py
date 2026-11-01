@@ -14,7 +14,7 @@ class ActivityCollector:
     def __init__(self, garmin_client):
         self.client = garmin_client
 
-    def fetch_recent_activities(self, limit: int = 100) -> list:
+    def fetch_recent_activities(self, limit: int = 3000) -> list:
         """Pobiera określoną liczbę najnowszych aktywności z Garmin Connect."""
         try:
             print(f"Pobieranie bazy {limit} ostatnich aktywności z Garmina...")
