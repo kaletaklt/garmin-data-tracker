@@ -93,13 +93,13 @@ def main():
     updater = GSheetsUpdater(spreadsheet_id=sheet_id, sheet_name="Aktywnosci")
 
     # 2. Pobranie ostatnich aktywności
-    activities = collector.fetch_recent_activities(limit=100)
+    activities = collector.fetch_recent_activities(limit=3000)
     if not activities:
         print("Brak aktywności do przetworzenia.")
         return
     
     # 3. Ustalenie okresu synchronizacji (30 dni)
-    cutoff_date = datetime.date.today() - datetime.timedelta(days=30)
+    cutoff_date = datetime.date.today() - datetime.timedelta(days=3000)
     print(f"Analiza treningów po dacie: {cutoff_date}...")
     
     # 4. Przetwarzanie i wysyłanie danych w kolejności chronologicznej (od najstarszej)
