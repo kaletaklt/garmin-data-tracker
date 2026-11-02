@@ -16,6 +16,30 @@ def get_spreadsheet():
     gc = gspread.service_account_from_dict(creds_dict)
     return gc.open_by_key(SPREADSHEET_ID)
 
+def rows_to_dicts(sheet, max_cols, tail_count):
+    """Bezpiecznie zamienia ostatnie wiersze arkusza na listę słowników, ignorując dodatkowe kolumny."""
+    all_values = sheet.get_all_values()
+    if len(all_values) < 2:
+        return []
+    headers = all_values[0][:max_cols]
+    data_rows = all_values[1:][-tail_count:]
+    result = []
+    for row in data_rows:
+        padded = row[:max_cols] + [""] * max(0, max_cols - len(row))
+        result.append(dict(zip(headers, padded)))
+    return result
+
+def ensure_treningi_headers(treningi_sheet):
+    """Upewnia się, że zakładka Treningi ma poprawne nagłówki w wierszu 1 (A1:D1)."""
+    expected = ["Data", "Nazwa", "Kod Treningu", "Status"]
+    all_values = treningi_sheet.get_all_values()
+    if not all_values or all_values[0][:4] != expected:
+        print("Naprawianie nagłówków w zakładce 'Treningi'...")
+        treningi_sheet.clear()
+        treningi_sheet.append_row(expected)
+        return []
+    return all_values[1:]
+
 def ask_gemini_coach(wellness_history, recent_activities, user_notes, target_date, day_name):
     if not GEMINI_API_KEY:
         raise ValueError("Brak klucza GEMINI_LLM_API_KEY w zmiennych środowiskowych!")
@@ -87,16 +111,16 @@ def main():
     days_pl = ["Poniedziałek", "Wtorek", "Środa", "Czwartek", "Piątek", "Sobota", "Niedziela"]
     day_name = days_pl[tomorrow.weekday()]
 
-    # Sprawdzamy, czy na jutro nie ma już zaplanowanego treningu
-    planned_records = treningi_sheet.get_all_records()
-    for row in planned_records:
-        if str(row.get("Data", "")).strip() == target_date:
+    # Upewniamy się, że zakładka Treningi ma nagłówki w wierszu 1 i sprawdzamy duplikaty daty
+    existing_rows = ensure_treningi_headers(treningi_sheet)
+    for row in existing_rows:
+        if row and str(row[0]).strip() == target_date:
             print(f"Trening na jutro ({target_date}) już istnieje w arkuszu. Pomijam.")
             return
 
-    # Pobieramy kontekst (tylko ostatnie wiersze, aby nie przekroczyć limitu tokenów)
-    wellness_records = wellness_sheet.get_all_records()[-7:]
-    activity_records = activities_sheet.get_all_records()[-10:]
+    # Pobieramy tylko 24 główne kolumny Wellness i 25 kolumn Aktywności
+    wellness_records = rows_to_dicts(wellness_sheet, max_cols=24, tail_count=7)
+    activity_records = rows_to_dicts(activities_sheet, max_cols=25, tail_count=10)
 
     print(f"Wysyłanie danych do Gemini AI (Uwagi: {USER_NOTES})...")
     ai_plan = ask_gemini_coach(wellness_records, activity_records, USER_NOTES, target_date, day_name)
