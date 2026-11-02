@@ -1,7 +1,7 @@
 import os
 import re
+import time
 import json
-import math
 import datetime
 import requests
 import gspread
@@ -41,7 +41,7 @@ def safe_float(val, default=None):
 
 
 def ensure_goals_sheet(sh):
-    """Tworzy lub odczytuje zakładkę 'Cele_i_Strategia' do wieloletniego zarządzania planem."""
+    """Tworzy lub odczytuje zakładkę 'Cele_i_Strategia'."""
     try:
         ws = sh.worksheet("Cele_i_Strategia")
         rows = ws.get_all_values()
@@ -50,8 +50,8 @@ def ensure_goals_sheet(sh):
         ws = sh.add_worksheet(title="Cele_i_Strategia", rows=40, cols=6)
         default_rows = [
             ["Typ_Wpisu", "Nazwa / Klucz", "Data_lub_Wartosc", "Dystans / Dyscyplina", "Cel_Wynikowy", "Priorytet / Uwagi"],
-            ["KONFIGURACJA", "Kalendarz_Email", DEFAULT_CALENDAR_ID, "Google Calendar", "Odczyt 7 dni", "Wpisz swój email Gmail w kolumnie C"],
-            ["KONFIGURACJA", "Profil_Atlety", "Hybrydowy (Bieganie + Siłownia + Gravel)", "2x Siłownia (Gym A/B), 3x Bieg", "Utrzymanie siły i masy mięśniowej", "Zasada: unikaj ciężkich interwałów dzień po ciężkich przysiadach/RDL"],
+            ["KONFIGURACJA", "Kalendarz_Email", DEFAULT_CALENDAR_ID, "Google Calendar", "Odczyt i zapis", "Wpisz swój email Gmail w kolumnie C"],
+            ["KONFIGURACJA", "Profil_Atlety", "Hybrydowy (Bieganie + Siłownia + Gravel)", "2x Siłownia (Gym A/B), 3x Bieg", "Utrzymanie siły i masy mięśniowej", "Unikaj ciężkich interwałów dzień po przysiadach/RDL"],
             ["KONFIGURACJA", "Rekord_Zyciowy_HM", "1:36:00", "Półmaraton (21.1 km)", "Marzec 2024", "Historyczny punkt odniesienia"],
             ["START_GLOWNY", "Półmaraton Warszawski 2027", "2027-03-28", "Bieg 21.1 km", "Sub 1:30:00 (tempo 4:15/km)", "Priorytet A - cel główny makrocyklu"],
             ["START_KONTROLNY", "Bieg Niepodległości / Test 10km", "2026-11-11", "Bieg 10 km", "Sprawdzenie tętna progowego", "Priorytet B - bieg kontrolny"]
@@ -96,7 +96,7 @@ def ensure_goals_sheet(sh):
                 else:
                     phase = "Base (Budowa bazy tlenowej, siły i ekonomii biegu)"
             except ValueError:
-                weeks_left = None
+                pass
 
             if days_left is None or days_left >= -7:
                 races.append({
@@ -114,20 +114,19 @@ def ensure_goals_sheet(sh):
 
 
 def fetch_google_calendar_events(calendar_id, days_ahead=7):
-    """Pobiera wydarzenia z Google Calendar na najbliższe dni przy użyciu tego samego konta usługi."""
     if not calendar_id or "@" not in calendar_id:
-        return ["Brak skonfigurowanego adresu Kalendarza Google w zakładce Cele_i_Strategia."]
+        return ["Brak skonfigurowanego adresu Kalendarza Google."]
 
     try:
-        creds = get_credentials(["https://www.googleapis.com/auth/calendar.readonly"])
+        creds = get_credentials(["https://www.googleapis.com/auth/calendar"])
         creds.refresh(Request())
         token = creds.token
 
-        now = datetime.datetime.utcnow()
-        time_min = now.isoformat() + "Z"
-        time_max = (now + datetime.timedelta(days=days_ahead)).isoformat() + "Z"
+        now = datetime.datetime.now(datetime.timezone.utc)
+        time_min = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        time_max = (now + datetime.timedelta(days=days_ahead)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        url = f"https://www.googleapis.com/calendar/v3/calendars/{ requests.utils.quote(calendar_id) }/events"
+        url = f"https://www.googleapis.com/calendar/v3/calendars/{requests.utils.quote(calendar_id)}/events"
         params = {
             "timeMin": time_min,
             "timeMax": time_max,
@@ -138,35 +137,76 @@ def fetch_google_calendar_events(calendar_id, days_ahead=7):
         headers = {"Authorization": f"Bearer {token}"}
         r = requests.get(url, headers=headers, params=params, timeout=15)
         if r.status_code != 200:
-            return [f"Kalendarz niedostępny (kod {r.status_code}) - upewnij się, że udostępniłeś kalendarz kontu usługi."]
+            return [f"Kalendarz niedostępny (kod {r.status_code})."]
 
         items = r.json().get("items", [])
         events_summary = []
         for ev in items:
             summary = ev.get("summary", "Zajęty termin")
+            if summary.startswith("[AI Coach]"):
+                continue
             start = ev.get("start", {}).get("dateTime", ev.get("start", {}).get("date", ""))
             end = ev.get("end", {}).get("dateTime", ev.get("end", {}).get("date", ""))
             events_summary.append(f"{start[:16]} -> {end[:16]}: {summary}")
 
-        return events_summary if events_summary else ["Brak zaplanowanych wydarzeń w kalendarzu na najbliższe 7 dni."]
+        return events_summary if events_summary else ["Brak zaplanowanych wydarzeń na najbliższe 7 dni."]
     except Exception as e:
         return [f"Nie udało się pobrać kalendarza: {e}"]
 
 
+def sync_workout_to_google_calendar(calendar_id, target_date, workout_name, steps_code, coach_note):
+    """Zapisuje lub aktualizuje zaplanowany trening bezpośrednio w Kalendarzu Google."""
+    if not calendar_id or "@" not in calendar_id:
+        return
+
+    try:
+        creds = get_credentials(["https://www.googleapis.com/auth/calendar"])
+        creds.refresh(Request())
+        headers = {
+            "Authorization": f"Bearer {creds.token}",
+            "Content-Type": "application/json"
+        }
+
+        base_url = f"https://www.googleapis.com/calendar/v3/calendars/{requests.utils.quote(calendar_id)}/events"
+        next_day = (datetime.datetime.strptime(target_date, "%Y-%m-%d").date() + datetime.timedelta(days=1)).isoformat()
+
+        # Sprawdzamy, czy na ten dzień jest już wpis [AI Coach] i usuwamy go przed nadpisaniem
+        params = {
+            "timeMin": f"{target_date}T00:00:00Z",
+            "timeMax": f"{next_day}T00:00:00Z",
+            "singleEvents": True
+        }
+        r_list = requests.get(base_url, headers=headers, params=params, timeout=15)
+        if r_list.status_code == 200:
+            for item in r_list.json().get("items", []):
+                if str(item.get("summary", "")).startswith("[AI Coach]"):
+                    ev_id = item.get("id")
+                    requests.delete(f"{base_url}/{ev_id}", headers=headers, timeout=10)
+
+        event_body = {
+            "summary": f"[AI Coach] {workout_name}",
+            "description": f"Kroki treningu:\n{steps_code}\n\nAnaliza trenera AI:\n{coach_note}",
+            "start": {"date": target_date},
+            "end": {"date": next_day}
+        }
+        r_ins = requests.post(base_url, headers=headers, json=event_body, timeout=15)
+        if r_ins.status_code in [200, 201]:
+            print(f"Dodano wpis do Kalendarza Google na dzień {target_date}: [AI Coach] {workout_name}")
+        else:
+            print(f"Uwaga: Nie udało się zapisać wydarzenia w Google Calendar (kod {r_ins.status_code}) - sprawdź, czy konto usługi ma uprawnienia 'Wprowadzanie zmian w wydarzeniach'.")
+    except Exception as e:
+        print(f"Błąd zapisu do Google Calendar: {e}")
+
+
 def analyze_full_history(wellness_sheet, activities_sheet):
-    """Przetwarza pełną wieloletnią historię Wellness i Aktywności w zwięzłe wskaźniki fizjologiczne."""
     w_all = wellness_sheet.get_all_values()
     a_all = activities_sheet.get_all_values()
-
     today = datetime.date.today()
 
-    # --- 1. Analiza Wellness (Trendy 7d vs 60d + ostatnie 7 dni szczegółowo) ---
     w_headers = w_all[0][:24] if w_all else []
     w_rows = w_all[1:] if len(w_all) > 1 else []
 
-    rhr_60, rhr_7 = [], []
-    hrv_60, hrv_7 = [], []
-    sleep_60, sleep_7 = [], []
+    rhr_60, rhr_7, hrv_60, hrv_7, sleep_60, sleep_7 = [], [], [], [], [], []
     recent_wellness = []
 
     for row in w_rows[-90:]:
@@ -207,7 +247,6 @@ def analyze_full_history(wellness_sheet, activities_sheet):
         "Sen_Wynik_baza_60d": avg(sleep_60),
     }
 
-    # --- 2. Analiza Aktywności (CTL, ATL, TSB, ACWR + 12 tygodni objętości) ---
     a_headers = a_all[0][:25] if a_all else []
     a_rows = a_all[1:] if len(a_all) > 1 else []
 
@@ -218,9 +257,8 @@ def analyze_full_history(wellness_sheet, activities_sheet):
     for row in a_rows:
         padded = row[:25] + [""] * max(0, 25 - len(row))
         act = dict(zip(a_headers, padded))
-        d_str = act.get("Data", "")
         try:
-            a_date = datetime.datetime.strptime(d_str, "%Y-%m-%d").date()
+            a_date = datetime.datetime.strptime(act.get("Data", ""), "%Y-%m-%d").date()
         except ValueError:
             continue
 
@@ -246,14 +284,12 @@ def analyze_full_history(wellness_sheet, activities_sheet):
             else:
                 weekly_stats[wk_key]["other_min"] += dur
 
-    # Obliczanie CTL (42d EWMA) i ATL (7d EWMA) po ostatnich 180 dniach
-    ctl = 0.0
-    atl = 0.0
+    ctl, atl = 0.0, 0.0
     for i in range(180, -1, -1):
         d = today - datetime.timedelta(days=i)
         ld = daily_load.get(d, 0.0)
-        ctl = ctl + (ld - ctl) * (1.0 / 42.0)
-        atl = atl + (ld - atl) * (1.0 / 7.0)
+        ctl += (ld - ctl) * (1.0 / 42.0)
+        atl += (ld - atl) * (1.0 / 7.0)
 
     tsb = ctl - atl
     acwr = round(atl / ctl, 2) if ctl > 5 else 1.0
@@ -273,7 +309,6 @@ def analyze_full_history(wellness_sheet, activities_sheet):
         "ATL_Zmeczenie_Ostre_7d": round(atl, 1),
         "TSB_Bilans_Swiezosci": round(tsb, 1),
         "ACWR_Wskaznik_Ryzyka_Kontuzji": acwr,
-        "Interpretacja_ACWR": "Optymalny (0.8-1.3)" if 0.8 <= acwr <= 1.3 else ("Wysokie ryzyko przeciążenia (>1.3)" if acwr > 1.3 else "Niskie obciążenie (<0.8)"),
         "Objetosc_Ostatnie_8_Tygodni": sorted_weeks
     }
 
@@ -287,7 +322,6 @@ def ensure_treningi_headers(treningi_sheet):
         treningi_sheet.append_row(expected)
         return []
     if all_values[0][:4] != expected[:4]:
-        print("Aktualizacja nagłówków w zakładce 'Treningi'...")
         treningi_sheet.clear()
         treningi_sheet.append_row(expected)
         return []
@@ -296,33 +330,63 @@ def ensure_treningi_headers(treningi_sheet):
     return all_values[1:]
 
 
-def get_candidate_models():
-    preferred_order = [
-        "gemini-4-argon",
-        "antigravity-preview-latest",
-        "gemini-3.8-flash",
-        "gemini-flash-latest",
-        "gemini-3.7-flash",
-        "gemini-3.5-flash",
-        "gemini-pro-latest"
+def get_dynamic_high_end_models():
+    """
+    Dynamicznie pobiera listę modeli z API Google, odrzuca modele lite/gemma/specjalistyczne
+    i sortuje je od najwyższej klasy (argon/ultra -> pro -> flash) oraz najnowszej generacji (np. 4.x -> 3.8).
+    """
+    excluded = [
+        "lite", "gemma", "tts", "image", "vision", "embedding",
+        "transcribe", "robotics", "lyria", "banana", "computer-use",
+        "customtools", "clip", "nano", "antigravity", "deep-research", "omni"
     ]
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
     try:
         r = requests.get(url, timeout=15)
         r.raise_for_status()
         models_data = r.json().get("models", [])
-        available = [
-            m["name"].replace("models/", "")
-            for m in models_data
-            if "generateContent" in m.get("supportedGenerationMethods", [])
-        ]
-        candidates = [m for m in preferred_order if m in available]
-        for m in available:
-            if m not in candidates and not any(x in m for x in ["tts", "image", "lyria", "robotics", "transcribe"]):
-                candidates.append(m)
-        return candidates if candidates else preferred_order
-    except Exception:
-        return preferred_order
+        scored = []
+
+        for m in models_data:
+            if "generateContent" not in m.get("supportedGenerationMethods", []):
+                continue
+            name = m["name"].replace("models/", "")
+            n_low = name.lower()
+
+            if not n_low.startswith("gemini-"):
+                continue
+            if any(bad in n_low for bad in excluded):
+                continue
+
+            ver_match = re.search(r"gemini-(\d+(?:\.\d+)?)", n_low)
+            if ver_match:
+                version = float(ver_match.group(1))
+                if version < 3.0:
+                    continue  # Odrzucamy stare generacje 1.x / 2.x zwracające 404
+            else:
+                version = 3.5  # Aliasy '-latest'
+
+            if "argon" in n_low or "ultra" in n_low:
+                tier = 4
+            elif "pro" in n_low:
+                tier = 3
+            elif "flash" in n_low:
+                tier = 2
+            else:
+                tier = 1
+
+            is_stable = 0 if ("preview" in n_low or "exp" in n_low) else 1
+            scored.append(((tier, version, is_stable), name))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        ranked = [name for _, name in scored]
+        print(f"Dynamiczny ranking najlepszych modeli (bez Lite/Gemma): {ranked}")
+        if ranked:
+            return ranked
+    except Exception as e:
+        print(f"Błąd pobierania katalogu modeli: {e}")
+
+    return ["gemini-pro-latest", "gemini-flash-latest"]
 
 
 def parse_json_response(raw_text):
@@ -346,7 +410,7 @@ WYTYCZNE TRENERSKIE:
 1. PERIODYZACJA I CELE: Dostosuj bodziec do aktualnej fazy makrocyklu względem głównego startu A oraz startów kontrolnych B.
 2. FIZJOLOGIA I REGENERACJA: Zwróć uwagę na odchylenie 7-dniowego HRV i RHR od bazy 60-dniowej, wynik snu, Body Battery oraz wskaźnik ACWR i TSB.
 3. GRAFIK I KALENDARZ GOOGLE: Jeśli jutro w kalendarzu Google są całodniowe wyjazdy lub bardzo napięty grafik, dostosuj czas trwania jednostki lub zaplanuj dzień wolny/regenerację.
-4. TRENING HYBRYDOWY: Zawodnik trenuje siłowo (Gym A / Gym B) i biega. Jeśli z historii aktywności lub uwag wynika, że na jutro przypada dzień wolny od biegania (np. sama siłownia lub pełny odpoczynek), ustaw w polu "steps" dokładnie słowo: REST
+4. TRENING HYBRYDOWY: Jeśli na jutro przypada dzień wolny od biegania (np. sama siłownia lub pełny odpoczynek), ustaw w polu "steps" dokładnie słowo: REST
 5. ZASADY KODU TRENINGU BIEGOWEGO (KRYTYCZNE DLA PARSERA GARMINA):
    Jeśli jutro jest bieg, każdy krok musi być w osobnej linii i zaczynać się od:
    warmup, interval, recovery, cooldown
@@ -358,7 +422,7 @@ Zwróć odpowiedź WYŁĄCZNIE jako czysty obiekt JSON w formacie:
 {{
   "workout_name": "Krótka nazwa treningu (np. Progowe 3x2km lub Regeneracja / Siłownia)",
   "steps": "wieloliniowy kod kroków dla Garmina LUB słowo REST jeśli jutro dzień bez biegania",
-  "coach_memory_note": "Zwięzła notatka analityczna (2-3 zdania): dlaczego podjąłeś taką decyzję (odnieś się do HRV/CTL/Kalendarza) i co planujesz na kolejne 3-4 dni mikrocyklu."
+  "coach_memory_note": "Zwięzła notatka analityczna (2-3 zdania): dlaczego podjąłeś taką decyzję i co planujesz na kolejne 3-4 dni mikrocyklu."
 }}"""
 
     payload = {
@@ -369,22 +433,29 @@ Zwróć odpowiedź WYŁĄCZNIE jako czysty obiekt JSON w formacie:
         }
     }
 
-    for model_name in get_candidate_models():
+    for model_name in get_dynamic_high_end_models():
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
-        print(f"Konsultacja z modelem: {model_name}...")
-        try:
-            response = requests.post(url, json=payload, timeout=45)
-            if response.status_code == 200:
-                data = response.json()
-                raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
-                print(f"Plan wygenerowany przez model: {model_name}")
-                return parse_json_response(raw_text)
-            else:
-                print(f"Model {model_name} zwrócił status {response.status_code}")
-        except Exception as e:
-            print(f"Błąd modelu {model_name}: {e}")
+        for attempt in range(1, 3):
+            print(f"Konsultacja z modelem: {model_name} (próba {attempt}/2)...")
+            try:
+                response = requests.post(url, json=payload, timeout=45)
+                if response.status_code == 200:
+                    data = response.json()
+                    raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+                    print(f"SUKCES! Plan wygenerowany przez model: {model_name}")
+                    return parse_json_response(raw_text)
+                elif response.status_code == 503 and attempt == 1:
+                    print(f"Serwer modelu {model_name} chwilowo zajęty (503). Ponawiam za 5 sekund...")
+                    time.sleep(5)
+                    continue
+                else:
+                    print(f"Model {model_name} zwrócił status {response.status_code}")
+                    break
+            except Exception as e:
+                print(f"Błąd modelu {model_name}: {e}")
+                break
 
-    raise RuntimeError("Wszystkie modele AI zwróciły błąd.")
+    raise RuntimeError("Żaden z modeli wysokiej klasy (Argon/Pro/Flash) nie odpowiedział poprawnie.")
 
 
 def main():
@@ -395,21 +466,17 @@ def main():
     activities_sheet = sh.worksheet("Aktywnosci")
     treningi_sheet = sh.worksheet("Treningi")
 
-    # 1. Cele długoterminowe i konfiguracja
     athlete_config, races_schedule = ensure_goals_sheet(sh)
     cal_email = athlete_config.get("Kalendarz_Email", {}).get("wartosc", DEFAULT_CALENDAR_ID)
 
-    # 2. Pobranie wydarzeń z Google Calendar na 7 dni wprzód
-    print(f"Pobieranie grafiku z Google Calendar ({cal_email})...")
+    print("Pobieranie grafiku z Google Calendar...")
     calendar_events = fetch_google_calendar_events(cal_email, days_ahead=7)
 
-    # 3. Analiza pełnej historii fizjologicznej
     print("Wyliczanie wskaźników CTL/ATL/ACWR i trendów wieloletnich...")
     wellness_summary, recent_wellness, load_metrics, recent_activities = analyze_full_history(
         wellness_sheet, activities_sheet
     )
 
-    # 4. Odczyt historii zaplanowanych treningów i pamięci trenera
     existing_rows = ensure_treningi_headers(treningi_sheet)
     recent_planned = []
     for r in existing_rows[-7:]:
@@ -425,16 +492,15 @@ def main():
     days_pl = ["Poniedziałek", "Wtorek", "Środa", "Czwartek", "Piątek", "Sobota", "Niedziela"]
     day_name = days_pl[tomorrow.weekday()]
 
-    # Sprawdzenie, czy jutrzejszy trening już istnieje w arkuszu
     existing_row_idx = None
     for idx, row in enumerate(existing_rows):
         if row and str(row[0]).strip() == target_date:
-            existing_row_idx = idx + 2  # +2 bo wiersz 1 to nagłówek, a indeksowanie od 1
+            existing_row_idx = idx + 2
             break
 
     default_note = "Samopoczucie w normie, brak dolegliwości."
     if existing_row_idx and USER_NOTES.strip() in ["", default_note, "Brak dodatkowych uwag, samopoczucie w normie."]:
-        print(f"Trening na jutro ({target_date}) jest już zaplanowany, a użytkownik nie zgłosił nowych uwag. Pomijam.")
+        print(f"Trening na jutro ({target_date}) jest już zaplanowany, brak nowych uwag. Pomijam.")
         return
 
     context_payload = {
@@ -467,10 +533,13 @@ def main():
 
     if existing_row_idx:
         treningi_sheet.update(values=[new_row], range_name=f"A{existing_row_idx}:E{existing_row_idx}")
-        print(f"ZAKTUALIZOWANO trening na {target_date} -> {workout_name}")
+        print(f"ZAKTUALIZOWANO trening w Google Sheets na {target_date} -> {workout_name}")
     else:
         treningi_sheet.append_row(new_row)
-        print(f"DODANO nowy trening na {target_date} -> {workout_name}")
+        print(f"DODANO nowy trening w Google Sheets na {target_date} -> {workout_name}")
+
+    # Synchronizacja zaplanowanego treningu bezpośrednio do Google Calendar
+    sync_workout_to_google_calendar(cal_email, target_date, workout_name, steps_code, coach_note)
 
 
 if __name__ == "__main__":
