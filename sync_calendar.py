@@ -8,12 +8,15 @@ import gspread
 from garmin_auth import GarminAuthenticator
 from add_workout import WorkoutStepParser, GarminWorkoutBuilder, WorkoutManager
 
-SPREADSHEET_ID = os.getenv("GOOGLE_SHEET_ID", "1qpQ2OCTqqu7QrMl_O8Rs-cwwoYHPG1TEGV6JuD-RsIg")
-JOIN_API_KEY = os.getenv("JOIN_API_KEY", "29f49de67d054e8b92b7eaa47f122ea3")
-JOIN_DEVICE_ID = "8160dbfac44d43ab956ca34412064bda"
+SPREADSHEET_ID = os.getenv("GOOGLE_SHEET_ID")
+JOIN_API_KEY = os.getenv("JOIN_API_KEY")
+JOIN_DEVICE_ID = os.getenv("JOIN_DEVICE_ID")
 
 
 def send_join_alert(date_str, workout_name):
+    if not JOIN_API_KEY or not JOIN_DEVICE_ID:
+        print(f"Pominięto alert Join (brak klucza/ID) dla: {workout_name} ({date_str})")
+        return
     text = f"garmin_alert=:={date_str}=:={workout_name}"
     url = "https://joinjoaomgcd.appspot.com/_ah/api/messaging/v1/sendPush"
     params = {"apikey": JOIN_API_KEY, "deviceId": JOIN_DEVICE_ID, "text": text}
@@ -34,16 +37,24 @@ def get_google_sheet():
     return sh.worksheet("Treningi")
 
 
+def get_garmin_calendar_items(garmin_client, year, month):
+    """Pobiera elementy kalendarza Garmin Connect (miesiące w API Garmina są indeksowane od 0 do 11)."""
+    endpoint = f"/calendar-service/year/{year}/month/{month - 1}"
+    data = garmin_client.connectapi(endpoint)
+    if isinstance(data, dict):
+        return data.get("calendarItems", [])
+    return []
+
+
 def delete_existing_workouts_on_date(garmin_client, target_date):
-    """Usuwa poprzedni trening z danego dnia przy aktualizacji planu przez AI."""
     try:
         dt = datetime.datetime.strptime(target_date, "%Y-%m-%d").date()
-        cal = garmin_client.get_training_calendar(dt.year, dt.month)
-        for item in cal:
+        items = get_garmin_calendar_items(garmin_client, dt.year, dt.month)
+        for item in items:
             if item.get("itemType") == "workout" and item.get("date") == target_date:
                 wid = item.get("workoutId")
                 if wid:
-                    garmin_client.delete_workout(wid)
+                    garmin_client.connectapi(f"/workout-service/workout/{wid}", method="DELETE")
                     print(f"Usunięto poprzednią wersję treningu z dnia {target_date} (ID: {wid}).")
     except Exception as e:
         print(f"Uwaga przy czyszczeniu starego treningu ({target_date}): {e}")
@@ -119,14 +130,14 @@ def main():
     print("Sprawdzanie kalendarza Garmin...")
     try:
         today = datetime.date.today()
-        cal = garmin_client.get_training_calendar(today.year, today.month)
+        cal_items = get_garmin_calendar_items(garmin_client, today.year, today.month)
 
         if today.day > 20:
             next_m = today.month + 1 if today.month < 12 else 1
             next_y = today.year if today.month < 12 else today.year + 1
-            cal.extend(garmin_client.get_training_calendar(next_y, next_m))
+            cal_items.extend(get_garmin_calendar_items(garmin_client, next_y, next_m))
 
-        for item in cal:
+        for item in cal_items:
             date_str = item.get("date")
             title = item.get("title")
 
