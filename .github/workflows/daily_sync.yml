@@ -1,7 +1,7 @@
 name: Garmin Daily Synchronization Loop
 
 on:
-  workflow_dispatch: # Umożliwia ręczne uruchomienie oraz wywołanie z Taskera
+  workflow_dispatch:
 
 jobs:
   sync:
@@ -21,26 +21,35 @@ jobs:
           python -m pip install --upgrade pip
           pip install garminconnect garth gspread requests
 
-      - name: 1. Synchronizacja Wellness (Wczoraj i Dziś)
+      - name: 1. Synchronizacja Wellness
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
-        run: python sync_wellness.py
+        run: python wellness_collector.py
 
-      - name: 2. Synchronizacja Ostatnich Aktywności
+      - name: 2. Synchronizacja Aktywności
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
-        run: python sync_activities.py
+        run: python activity_collector.py
 
-      - name: 3. Synchronizacja Kalendarza i Treningów
+      - name: 3. AI Coach - Generowanie Treningu
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
+        run: python ai_coach.py
+
+      - name: 4. Synchronizacja Kalendarza
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
+          JOIN_API_KEY: ${{ secrets.JOIN_API_KEY }}
         run: python sync_calendar.py
