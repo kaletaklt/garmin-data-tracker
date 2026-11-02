@@ -2,6 +2,11 @@ name: Garmin Daily Synchronization Loop
 
 on:
   workflow_dispatch:
+    inputs:
+      user_notes:
+        description: 'Jak się dziś czujesz? (Opcjonalne uwagi dla AI Coacha)'
+        required: false
+        default: 'Samopoczucie w normie, brak dolegliwości.'
 
 jobs:
   sync:
@@ -37,12 +42,12 @@ jobs:
           GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
         run: python activity_collector.py
 
-      - name: 3. AI Coach - Generowanie Treningu
+      - name: 3. AI Coach - Generowanie Treningu (Gemini)
         env:
-          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
-          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
+          GEMINI_LLM_API_KEY: ${{ secrets.GEMINI_LLM_API_KEY }}
+          USER_NOTES: ${{ github.event.inputs.user_notes }}
         run: python ai_coach.py
 
       - name: 4. Synchronizacja Kalendarza
