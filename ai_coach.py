@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import datetime
 import requests
@@ -42,7 +43,19 @@ def ensure_treningi_headers(treningi_sheet):
     return all_values[1:]
 
 
-def get_best_gemini_model():
+def get_candidate_models():
+    preferred_order = [
+        "gemini-flash-latest",
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-4-argon",
+        "gemini-pro-latest",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-pro",
+        "gemini-2.5-flash"
+    ]
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
     try:
         r = requests.get(url, timeout=15)
@@ -53,24 +66,24 @@ def get_best_gemini_model():
             for m in models_data
             if "generateContent" in m.get("supportedGenerationMethods", [])
         ]
-        print(f"Wykryte modele Gemini na kluczu: {available}")
-        for preferred in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
-            if preferred in available:
-                return preferred
-        if available:
-            return available[0]
+        candidates = [m for m in preferred_order if m in available]
+        for m in available:
+            if m not in candidates and "tts" not in m and "image" not in m and "lyria" not in m:
+                candidates.append(m)
+        return candidates if candidates else preferred_order
     except Exception as e:
-        print(f"Nie udało się pobrać listy modeli ({e}), używam domyślnego gemini-2.5-flash.")
-    return "gemini-2.5-flash"
+        print(f"Nie udało się pobrać listy modeli ({e}), używam listy domyślnej.")
+        return preferred_order
+
+
+def parse_json_response(raw_text):
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text.strip(), flags=re.IGNORECASE)
+    return json.loads(cleaned)
 
 
 def ask_gemini_coach(wellness_history, recent_activities, user_notes, target_date, day_name):
     if not GEMINI_API_KEY:
         raise ValueError("Brak klucza GEMINI_LLM_API_KEY w zmiennych środowiskowych!")
-
-    model_name = get_best_gemini_model()
-    print(f"Używam modelu: {model_name}")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
 
     prompt = f"""Jesteś zaawansowanym trenerem biegania i przygotowania motorycznego.
 Twój zawodnik to sportowiec hybrydowy (bieganie + siłownia 2x w tygodniu).
@@ -115,12 +128,27 @@ Zwróć odpowiedź WYŁĄCZNIE jako czysty obiekt JSON w formacie:
         }
     }
 
-    response = requests.post(url, json=payload, timeout=30)
-    response.raise_for_status()
-    data = response.json()
+    candidates = get_candidate_models()
+    last_error = None
 
-    raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
-    return json.loads(raw_text)
+    for model_name in candidates:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+        print(f"Próba wywołania modelu: {model_name}...")
+        try:
+            response = requests.post(url, json=payload, timeout=30)
+            if response.status_code == 200:
+                data = response.json()
+                raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+                print(f"Sukces z modelem: {model_name}")
+                return parse_json_response(raw_text)
+            else:
+                print(f"Model {model_name} zwrócił kod {response.status_code}: {response.text[:200]}")
+                last_error = f"{response.status_code}: {response.text}"
+        except Exception as e:
+            print(f"Błąd przy modelu {model_name}: {e}")
+            last_error = str(e)
+
+    raise RuntimeError(f"Wszystkie modele Gemini zawiodły. Ostatni błąd: {last_error}")
 
 
 def main():
