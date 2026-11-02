@@ -1,6 +1,5 @@
 import os
 import datetime
-import time
 from garmin_auth import GarminAuthenticator
 from gsheets_updater import GSheetsUpdater
 
@@ -14,43 +13,14 @@ class ActivityCollector:
     def __init__(self, garmin_client):
         self.client = garmin_client
 
-    def fetch_activities_until(self, cutoff_date: datetime.date) -> list:
-        """Pobiera aktywności partiami, cofając się do podanej daty."""
-        all_activities = []
-        start = 0
-        limit = 100
-        
-        print(f"Pobieranie historii partiami (po {limit} sztuk) do daty {cutoff_date}...")
-        
-        while True:
-            try:
-                print(f"Pobieranie od indeksu {start}...")
-                chunk = self.client.get_activities(start, limit)
-                
-                if not chunk:
-                    break
-                    
-                all_activities.extend(chunk)
-                
-                # Weryfikacja daty najstarszego treningu w pobranej paczce
-                oldest_in_chunk_str = chunk[-1].get("startTimeLocal", "")[:10]
-                if oldest_in_chunk_str:
-                    try:
-                        oldest_date = datetime.datetime.strptime(oldest_in_chunk_str, "%Y-%m-%d").date()
-                        if oldest_date < cutoff_date:
-                            print("Osiągnięto limit daty. Kończenie pobierania.")
-                            break
-                    except ValueError:
-                        pass
-                
-                start += limit
-                time.sleep(2) # Bezpieczne opóźnienie, aby nie zablokować API
-                
-            except Exception as e:
-                print(f"Błąd pobierania partii: {e}")
-                break
-                
-        return all_activities
+    def fetch_recent_activities(self, limit: int = 20) -> list:
+        """Pobiera wyłącznie ostatnie aktywności do codziennej synchronizacji."""
+        try:
+            print(f"Pobieranie {limit} najnowszych aktywności z Garmina...")
+            return self.client.get_activities(0, limit) or []
+        except Exception as e:
+            print(f"Błąd pobierania aktywności: {e}")
+            return []
 
     @staticmethod
     def _round_safe(val, digits=2):
@@ -115,20 +85,15 @@ def main():
 
     updater = GSheetsUpdater(spreadsheet_id=sheet_id, sheet_name="Aktywnosci")
 
-    # ==============================================================================
-    # KONFIGURACJA ZAKRESU POBIERANIA
-    # ==============================================================================
-    # 1. Aby zassać wszystko od 2022: cutoff_date = datetime.date(2022, 4, 1)
-    # 2. Po jednorazowym pobraniu zmień na: cutoff_date = datetime.date.today() - datetime.timedelta(days=7)
-    # ==============================================================================
-    cutoff_date = datetime.date(2022, 4, 1)
+    # Codzienna synchronizacja sprawdza tylko ostatnie 7 dni
+    cutoff_date = datetime.date.today() - datetime.timedelta(days=7)
+    activities = collector.fetch_recent_activities(limit=20)
 
-    activities = collector.fetch_activities_until(cutoff_date=cutoff_date)
     if not activities:
         print("Brak aktywności do przetworzenia.")
         return
 
-    print(f"Rozpoczynam zapis {len(activities)} aktywności do Google Sheets...")
+    print(f"Weryfikacja aktywności z ostatnich 7 dni (od {cutoff_date})...")
 
     for activity in reversed(activities):
         activity_id = str(activity.get("activityId", ""))
@@ -147,7 +112,7 @@ def main():
         row = collector.extract_activity_data(activity)
         updater.upsert_row(identifier=activity_id, col_index=1, row_data=row)
 
-    print("Zakończono pomyślnie synchronizację z Google Sheets.")
+    print("Zakończono pomyślnie synchronizację aktywności z Google Sheets.")
 
 if __name__ == "__main__":
     main()
