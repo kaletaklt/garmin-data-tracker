@@ -40,6 +40,15 @@ def safe_float(val, default=None):
         return default
 
 
+def clean_empty_values(data):
+    """Usuwa puste klucze ze słowników, aby zmniejszyć rozmiar promptu i przyspieszyć odpowiedź AI."""
+    if isinstance(data, list):
+        return [clean_empty_values(v) for v in data]
+    if isinstance(data, dict):
+        return {k: clean_empty_values(v) for k, v in data.items() if v not in ["", None]}
+    return data
+
+
 def ensure_goals_sheet(sh):
     """Tworzy lub odczytuje zakładkę 'Cele_i_Strategia'."""
     try:
@@ -170,7 +179,6 @@ def sync_workout_to_google_calendar(calendar_id, target_date, workout_name, step
         base_url = f"https://www.googleapis.com/calendar/v3/calendars/{requests.utils.quote(calendar_id)}/events"
         next_day = (datetime.datetime.strptime(target_date, "%Y-%m-%d").date() + datetime.timedelta(days=1)).isoformat()
 
-        # Sprawdzamy, czy na ten dzień jest już wpis [AI Coach] i usuwamy go przed nadpisaniem
         params = {
             "timeMin": f"{target_date}T00:00:00Z",
             "timeMax": f"{next_day}T00:00:00Z",
@@ -193,7 +201,7 @@ def sync_workout_to_google_calendar(calendar_id, target_date, workout_name, step
         if r_ins.status_code in [200, 201]:
             print(f"Dodano wpis do Kalendarza Google na dzień {target_date}: [AI Coach] {workout_name}")
         else:
-            print(f"Uwaga: Nie udało się zapisać wydarzenia w Google Calendar (kod {r_ins.status_code}) - sprawdź, czy konto usługi ma uprawnienia 'Wprowadzanie zmian w wydarzeniach'.")
+            print(f"Uwaga: Google Calendar zwrócił kod {r_ins.status_code} przy próbie zapisu.")
     except Exception as e:
         print(f"Błąd zapisu do Google Calendar: {e}")
 
@@ -294,7 +302,7 @@ def analyze_full_history(wellness_sheet, activities_sheet):
     tsb = ctl - atl
     acwr = round(atl / ctl, 2) if ctl > 5 else 1.0
 
-    for row in a_rows[-14:]:
+    for row in a_rows[-12:]:
         padded = row[:25] + [""] * max(0, 25 - len(row))
         recent_activities.append(dict(zip(a_headers, padded)))
 
@@ -333,7 +341,7 @@ def ensure_treningi_headers(treningi_sheet):
 def get_dynamic_high_end_models():
     """
     Dynamicznie pobiera listę modeli z API Google, odrzuca modele lite/gemma/specjalistyczne
-    i sortuje je od najwyższej klasy (argon/ultra -> pro -> flash) oraz najnowszej generacji (np. 4.x -> 3.8).
+    i sortuje je od najwyższej klasy oraz najnowszej generacji.
     """
     excluded = [
         "lite", "gemma", "tts", "image", "vision", "embedding",
@@ -362,9 +370,9 @@ def get_dynamic_high_end_models():
             if ver_match:
                 version = float(ver_match.group(1))
                 if version < 3.0:
-                    continue  # Odrzucamy stare generacje 1.x / 2.x zwracające 404
+                    continue
             else:
-                version = 3.5  # Aliasy '-latest'
+                version = 3.5
 
             if "argon" in n_low or "ultra" in n_low:
                 tier = 4
@@ -386,7 +394,7 @@ def get_dynamic_high_end_models():
     except Exception as e:
         print(f"Błąd pobierania katalogu modeli: {e}")
 
-    return ["gemini-pro-latest", "gemini-flash-latest"]
+    return ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-flash-latest", "gemini-3.5-flash"]
 
 
 def parse_json_response(raw_text):
@@ -398,13 +406,15 @@ def ask_holistic_ai_coach(context_payload, target_date, day_name):
     if not GEMINI_API_KEY:
         raise ValueError("Brak klucza GEMINI_LLM_API_KEY!")
 
+    compact_context = clean_empty_values(context_payload)
+
     prompt = f"""Jesteś elitarnym, holistycznym trenerem personalnym AI (bieganie długodystansowe, przygotowanie siłowe, kolarstwo gravelowe) prowadzącym zawodnika długofalowo przez kolejne sezony.
 
 ZADANIE:
 Przeanalizuj pełny kontekst fizjologiczny, realizację dotychczasowego planu, kalendarz prywatny oraz cele wieloletnie i zaplanuj optymalną decyzję treningową na jutro: {target_date} ({day_name}).
 
 PEŁNY KONTEKST ZAWODNIKA (JSON):
-{json.dumps(context_payload, ensure_ascii=False, indent=2)}
+{json.dumps(compact_context, ensure_ascii=False)}
 
 WYTYCZNE TRENERSKIE:
 1. PERIODYZACJA I CELE: Dostosuj bodziec do aktualnej fazy makrocyklu względem głównego startu A oraz startów kontrolnych B.
@@ -433,29 +443,66 @@ Zwróć odpowiedź WYŁĄCZNIE jako czysty obiekt JSON w formacie:
         }
     }
 
-    for model_name in get_dynamic_high_end_models():
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
-        for attempt in range(1, 3):
-            print(f"Konsultacja z modelem: {model_name} (próba {attempt}/2)...")
+    active_models = get_dynamic_high_end_models()
+    permanently_blocked = set()
+
+    max_wait_seconds = 900  # Pętla próbuje do skutku przez maksymalnie 15 minut
+    start_time = time.time()
+    round_num = 1
+
+    while (time.time() - start_time) < max_wait_seconds:
+        models_to_try = [m for m in active_models if m not in permanently_blocked]
+        if not models_to_try:
+            # Jeśli wszystkie zostały oznaczone jako zablokowane, resetujemy listę po odczekaniu
+            permanently_blocked.clear()
+            models_to_try = list(active_models)
+
+        print(f"\n--- RUNDA {round_num} POSZUKIWANIA DOSTĘPNEGO MODELU ---")
+
+        for model_name in models_to_try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+            print(f"[Runda {round_num}] Konsultacja z modelem: {model_name} (timeout=120s)...")
+
             try:
-                response = requests.post(url, json=payload, timeout=45)
+                response = requests.post(url, json=payload, timeout=120)
+
                 if response.status_code == 200:
                     data = response.json()
                     raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
-                    print(f"SUKCES! Plan wygenerowany przez model: {model_name}")
-                    return parse_json_response(raw_text)
-                elif response.status_code == 503 and attempt == 1:
-                    print(f"Serwer modelu {model_name} chwilowo zajęty (503). Ponawiam za 5 sekund...")
-                    time.sleep(5)
-                    continue
-                else:
-                    print(f"Model {model_name} zwrócił status {response.status_code}")
-                    break
-            except Exception as e:
-                print(f"Błąd modelu {model_name}: {e}")
-                break
+                    parsed = parse_json_response(raw_text)
+                    print(f"SUKCES! Plan wygenerowany przez model: {model_name} w rundzie {round_num}.")
+                    return parsed
 
-    raise RuntimeError("Żaden z modeli wysokiej klasy (Argon/Pro/Flash) nie odpowiedział poprawnie.")
+                elif response.status_code == 429:
+                    err_text = response.text
+                    if "limit: 0" in err_text or "limit:0" in err_text:
+                        print(f"Model {model_name} ma limit=0 na obecnym planie klucza API - pomijam w kolejnych rundach.")
+                        permanently_blocked.add(model_name)
+                    else:
+                        print(f"Model {model_name} przekroczył chwilowy limit zapytań (429). Spróbuję ponownie w kolejnej rundzie.")
+
+                elif response.status_code in [400, 404]:
+                    print(f"Model {model_name} niedostępny (kod {response.status_code}) - pomijam w kolejnych rundach.")
+                    permanently_blocked.add(model_name)
+
+                elif response.status_code in [500, 502, 503, 504]:
+                    print(f"Serwer modelu {model_name} przeciążony (kod {response.status_code}). Czekam 6s przed kolejnym modelem...")
+                    time.sleep(6)
+
+                else:
+                    print(f"Model {model_name} zwrócił nieoczekiwany kod {response.status_code}.")
+
+            except requests.exceptions.Timeout:
+                print(f"Model {model_name} przekroczył 120s czasu odpowiedzi (Timeout). Przechodzę dalej...")
+            except Exception as e:
+                print(f"Błąd przy modelu {model_name}: {e}")
+
+        wait_between_rounds = min(15 * round_num, 45)
+        print(f"Żaden model nie odpowiedział w rundzie {round_num}. Odczekuję {wait_between_rounds}s przed kolejną pętlą...")
+        time.sleep(wait_between_rounds)
+        round_num += 1
+
+    raise RuntimeError("Przekroczono 15-minutowy limit oczekiwania na odpowiedź modeli Gemini.")
 
 
 def main():
@@ -512,7 +559,7 @@ def main():
         "wskazniki_obciazenia_CTL_ATL_ACWR": load_metrics,
         "trendy_wellness_7d_vs_60d": wellness_summary,
         "ostatnie_7_dni_wellness": recent_wellness,
-        "ostatnie_14_aktywnosci": recent_activities,
+        "ostatnie_12_aktywnosci": recent_activities,
         "ostatnie_zaplanowane_treningi_i_notatki_AI": recent_planned
     }
 
@@ -538,7 +585,6 @@ def main():
         treningi_sheet.append_row(new_row)
         print(f"DODANO nowy trening w Google Sheets na {target_date} -> {workout_name}")
 
-    # Synchronizacja zaplanowanego treningu bezpośrednio do Google Calendar
     sync_workout_to_google_calendar(cal_email, target_date, workout_name, steps_code, coach_note)
 
 
