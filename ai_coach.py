@@ -660,7 +660,10 @@ def main():
 
     default_note = "Samopoczucie w normie, brak dolegliwości."
     if existing_row_idx and not needs_hr_conversion and USER_NOTES.strip() in ["", default_note, "Brak dodatkowych uwag, samopoczucie w normie."]:
-        print(f"Trening na jutro ({target_date}) jest już zaplanowany w poprawnym formacie, brak nowych uwag. Pomijam.")
+        print(f"Trening na jutro ({target_date}) jest już w arkuszu. Synchronizuję z Google Calendar...")
+        existing_steps = "\n".join(existing_code.splitlines()[1:]) if "\n" in existing_code else existing_code
+         existing_note = str(existing_rows[existing_row_idx - 2][4]).strip() if len(existing_rows[existing_row_idx - 2]) > 4 else ""
+        sync_workout_to_google_calendar(cal_email, target_date, existing_name, existing_steps, existing_note)
         return
 
     context_payload = {
