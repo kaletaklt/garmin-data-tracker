@@ -58,7 +58,7 @@ def rule_based_category(summary, is_self_organizer, my_status, transparency):
         return "LEKARZ"
     if any(k in s_low for k in ["basen", "pływanie", "swim"]):
         return "BASEN"
-    if any(k in s_low for k in ["siłownia", "silownia", "gym a", "gym b", "gym c", "trening siłowy"]):
+    if any(k in s_low for k in ["siłownia", "silownia", "gym a", "gym b", "gym c", "trening siłowy", "gym"]):
         return "SILOWNIA"
     if any(k in s_low for k in ["bieg", "run", "interwały", "półmaraton"]):
         return "BIEGANIE"
