@@ -11,17 +11,24 @@ CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", os.getenv("GARMIN_EMAIL", ""))
 
 # Mapowanie kategorii na Twoją paletę kolorów (Google Calendar Event colorId 1-11) oraz ikony
 CATEGORY_STYLE = {
-    "BASEN":        {"colorId": "1",  "icon": "🏊"},  # Twoja etykieta: Basen
-    "CZAS_PRACY":   {"colorId": "8",  "icon": "💻"},  # Twoja etykieta: Czas pracy (Brzoza/Szałwia)
-    "ROWER":        {"colorId": "3",  "icon": "🚴"},  # Twoja etykieta: Rower
-    "SILOWNIA":     {"colorId": "2",  "icon": "🏋️"},  # Twoja etykieta: Siłownia (Kwiat wiśni)
-    "SPOTKANIA":    {"colorId": "5",  "icon": "👥"},  # Twoja etykieta: Spotkania (Cytryna)
-    "BIURO":        {"colorId": "4",  "icon": "🏢"},  # Twoja etykieta: Biuro (Kakao)
-    "INFORMACYJNE": {"colorId": "9",  "icon": "ℹ️"},  # Twoja etykieta: Informacyjne (Grafit)
-    "LEKARZ":       {"colorId": "11",  "icon": "🩺"},  # Lekarz (lub "2" / "10" zależnie od Twojej etykiety)
-    "BIEGANIE":     {"colorId": "10", "icon": "🏃"},  # Bieganie (Bazylia)
-    "URLOP":        {"colorId": "7", "icon": "✈️"},  # Urlop / Wyjazdy (Pomidor)
+    # --- SPORT I ZDROWIE ---
+    "LEKARZ":       {"colorId": "2",  "icon": "🩺"},  # Jasnozielony (Szałwia / Sage)
+    "BIEGANIE":     {"colorId": "10", "icon": "🏃"},  # Ciemnozielony (Bazylia / Basil)
+    "ROWER":        {"colorId": "6",  "icon": "🚴"},  # Pomarańczowy (Mandarynka / Tangerine)
+    "BASEN":        {"colorId": "7",  "icon": "🏊"},  # Niebieski / Błękitny (Paw / Peacock)
+    "SILOWNIA":     {"colorId": "11", "icon": "🏋️"},  # Czerwony (Pomidor / Tomato)
+
+    # --- PRACA (Spójna, chłodna paleta fioletowo-granatowa) ---
+    "CZAS_PRACY":   {"colorId": "1",  "icon": "💻"},  # Jasnofioletowy (Lawenda / Lavender)
+    "BIURO":        {"colorId": "9",  "icon": "🏢"},  # Ciemnoniebieski / Indygo (Jagoda / Blueberry)
+
+    # --- POZOSTAŁE / ŻYCIE PRYWATNE ---
+    "SPOTKANIA":    {"colorId": "5",  "icon": "👥"},  # Żółty (Banan / Banana)
+    "URLOP":        {"colorId": "4",  "icon": "✈️"},  # Koralowy / Różowy (Flaming / Flamingo)
+    "INFORMACYJNE": {"colorId": "8",  "icon": "ℹ️"},  # Szary (Grafit / Graphite - również dni REST)
+    "INNE":         {"colorId": "3",  "icon": "📌"},  # Ciemny fiolet (Winogrono / Grape)
 }
+
 
 KNOWN_ICONS = {v["icon"] for v in CATEGORY_STYLE.values()} | {"🧘", "🔥", "⚽"}
 
