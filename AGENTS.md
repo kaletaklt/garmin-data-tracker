@@ -6,12 +6,12 @@ Autonomiczny system trenerski łączący Garmin Connect, Google Sheets, Google C
 ## Struktura modułów
 - `wellness_collector.py`: Pobiera statystyki snu, HRV, RHR, Body Battery, stresu i kroków z ostatnich 7 dni do zakładki `Wellness`.
 - `activity_collector.py`: Pobiera 20 ostatnich aktywności i aktualizuje ostatnie 7 dni w zakładce `Aktywnosci`.
-- `ai_coach.py`: Silnik fizjologiczny i decyzyjny:
-  - Wylicza CTL (42d), ATL (7d), TSB, ACWR, bazę 60d HRV/RHR/Snu oraz statystyki objętości z 8 tygodni.
-  - Odczytuje zreorganizowaną zakładkę `Cele_i_Strategia` (tabela Mezocykli oraz tabela Konfiguracji, Reguł, Urlopów i Startów).
-  - **TODO-06 (Automatyczny audyt wykonania treningu – Plan vs Wykonanie)**: Funkcja `audit_past_workouts()` porównuje zaplanowane jednostki z przeszłości (oraz z dzisiaj, jeśli aktywność już spłynęła) z zakładką `Aktywnosci` i aktualizuje kolumny `Status` (`Zrealizowane ✅`, `Zmodyfikowane ⚠️`, `Pominięte ❌`) oraz `Notatka_Trenera` (dopisuje tag `[AUDYT WYKONANIA: ...]`).
-  - **TODO-05 (Generator i adaptator kroczącego planu 7-dniowego)**: Funkcja `ask_holistic_7day_coach()` planuje i adaptuje horyzont 7 kolejnych dni. Zachowuje stabilność istniejącego planu, o ile nie pojawiła się kolizja w Google Calendar (np. ręcznie wpisana siłownia `gym A`/`gym B`), spadek HRV lub pominięty trening.
-  - Synchronizuje zaplanowane jednostki z Google Calendar (`sync_workout_to_google_calendar`), unikając duplikatów dla ręcznie wpisanych sesji siłowych i dobierając optymalne okno czasowe poza godzinami pracy/spotkaniami.
+- `ai_coach.py`: Punkt wejścia i orkiestrator silnika trenerskiego (`main()` oraz obsługa arkusza `Treningi`: `get_credentials`, `get_spreadsheet`, `ensure_treningi_headers`, `normalize_steps_only`), integrujący 4 moduły pomocnicze:
+  - `coach_analytics.py`: Analityka fizjologiczna i odczyt strategii (`analyze_full_history`, `read_goals_and_strategy`, `safe_float`) – wylicza CTL (42d), ATL (7d), TSB, ACWR, bazę 60d HRV/RHR/Snu, statystyki objętości z 8 tygodni oraz odczytuje zakładkę `Cele_i_Strategia` (tabela Mezocykli oraz tabela Konfiguracji, Reguł, Urlopów i Startów).
+  - `coach_auditor.py`: Audyt wykonania treningów (TODO-06) oraz strażnik reguł mikrocyklu (`audit_past_workouts`, `parse_planned_steps_summary`, `format_pace_min_km`, `enforce_fixed_gym_and_max_streak`, `is_rest_day_entry`) – porównuje zaplanowane jednostki z zakładką `Aktywnosci`, aktualizuje kolumny `Status` i `Notatka_Trenera` oraz wymusza sztywne sesje siłowe z Google Calendar i zasadę maksymalnie 3 dni treningowych z rzędu.
+  - `gcal_bridge.py`: Integracja z Google Calendar (`fetch_calendar_context`, `extract_fixed_gym_days`, `estimate_workout_duration_minutes`, `find_optimal_workout_slot`, `sync_workout_to_google_calendar`) – pobiera grafik na 10 dni, wykrywa sztywne sesje siłowe (`gym A`/`gym B`), dobiera optymalne okna czasowe poza godzinami pracy/spotkaniami i synchronizuje wydarzenia `[AI Coach]`.
+  - `gemini_client.py`: Klient LLM i generator planu 7-dniowego (TODO-05) (`get_dynamic_high_end_models`, `ask_holistic_7day_coach`, `parse_json_response`, `clean_empty_values`) – dynamicznie wybiera najwyższy dostępny model Gemini i generuje/adaptuje kroczący plan 7-dniowy.
+- `log_subjective.py`: Zapisuje subiektywne raporty samopoczucia (energia, RPE, DOMS, dyskomfort) do zakładki `Dziennik_Subiektywny` i opcjonalnie wyzwala natychmiastową adaptację planu (`ai_coach.py` + `sync_calendar.py`).
 - `sync_calendar.py`: Parsuje kody treningów ze statusami `Do wgrania` oraz `Do aktualizacji` i wysyła je do kalendarza Garmin Connect (oraz czyści wycofane treningi biegowe zamienione na `REST`).
 - `calendar_organizer.py`: Automatycznie kategoryzuje, porządkuje tytuły, dodaje ikony i przypisuje spójną paletę kolorów (`colorId`) wydarzeniom w Google Calendar.
 - `add_workout.py`: Parser kroków treningowych (`warmup`, `interval`, `recovery`, `cooldown`) na format JSON Garmin ExecutableStepDTO.
@@ -26,4 +26,4 @@ Autonomiczny system trenerski łączący Garmin Connect, Google Sheets, Google C
 3. Cykl życia statusów w zakładce `Treningi`:
    - `Do wgrania` / `Do aktualizacji` / `Zaplanowane (Bez biegu)` -> nadawane przez `ai_coach.py` podczas generowania i adaptacji planu 7-dniowego (TODO-05).
    - `Zaplanowane` -> nadawane przez `sync_calendar.py` po pomyślnym przesłaniu treningu biegowego do Garmin Connect.
-   - `Zrealizowane ✅...` / `Zmodyfikowane ⚠️...` / `Pominięte ❌` -> nadawane przez `ai_coach.py` podczas audytu wykonania (TODO-06).
+   - `Zrealizowane ✅...` / `Zmodyfikowane ⚠️...` / `Pominięte ❌` -> nadawane przez `coach_auditor.py` (`audit_past_workouts`) podczas audytu wykonania (TODO-06).
