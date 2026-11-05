@@ -44,127 +44,105 @@ def clean_empty_values(data):
     if isinstance(data, list):
         return [clean_empty_values(v) for v in data]
     if isinstance(data, dict):
-        return {k: clean_empty_values(v) for k, v in data.items() if v not in ["", None]}
+        return {k: clean_empty_values(v) for k, v in data.items() if v not in ["", None, [], {}]}
     return data
 
 
-def ensure_goals_sheet(sh):
+def read_goals_and_strategy(sh):
     """
-    Odczytuje wszystkie wpisy użytkownika z zakładki 'Cele_i_Strategia' (w tym URLOP, REGULA_TRENINGOWA,
-    PREFERENCJE_TYGODNIA, START_ROZWAZANY, UWAGA_STRATEGICZNA) i dopisuje nowe szablony, jeśli ich brakuje.
+    Odczytuje zreorganizowaną zakładkę 'Cele_i_Strategia':
+    zarówno tabelę Mezocykli, jak i tabelę Konfiguracji, Reguł, Urlopów i Startów.
     """
-    try:
-        ws = sh.worksheet("Cele_i_Strategia")
-        rows = ws.get_all_values()
-    except gspread.exceptions.WorksheetNotFound:
-        ws = sh.add_worksheet(title="Cele_i_Strategia", rows=60, cols=6)
-        rows = [["Typ_Wpisu", "Nazwa / Klucz", "Data_lub_Wartosc", "Dystans / Dyscyplina", "Cel_Wynikowy", "Priorytet / Uwagi"]]
-        ws.update(values=rows, range_name="A1")
-
-    existing_keys = {r[1].strip() for r in rows[1:] if len(r) > 1 and r[1].strip()}
-    template_additions = [
-        ["REGULA_TRENINGOWA", "Biegi_Spokojne_HR", "Tylko Tętno (BPM)", "Z1/Rozgrzewka: 115-132bpm, Z2/Easy: 125-145bpm", "Zakaz podawania tempa dla Easy Run", "Wszystkie biegi Easy, Recovery i spokojne Long Run muszą mieć cel w bpm"],
-        ["REGULA_TRENINGOWA", "Biegi_Jakosciowe_Tempo", "Tempo (min/km)", "Tempo HM: 4:10-4:20/km, Interwały: 3:50-4:05/km", "Sterowanie tempem na akcentach", "Dla biegów progowych i interwałów używaj widełek min/km"],
-        ["PREFERENCJE_TYGODNIA", "Rozklad_Dyscyplin", "2-3x Siłownia (Gym A/B), 3x Bieg", "Przeplatanie: Rower / Basen", "Elastyczna rotacja bodźców", "Wplataj rower lub basen jako trening uzupełniający/regeneracyjny"],
-        ["START_ROZWAZANY", "Wpisz rozważane zawody", "2027-06-15", "Bieg / Triathlon / Gravel", "Cel orientacyjny", "Status: Rozważam - AI weźmie pod uwagę w strategii"],
-        ["UWAGA_STRATEGICZNA", "Miejsce na Twoje pomysły", "Aktywne", "Wskazówka dla AI", "Analiza długoterminowa", "Dopisz tu dowolny wiersz (np. KONTUZJA, POMYSL, URLOP), a AI go uwzględni"]
-    ]
-    new_rows_to_append = [t for t in template_additions if t[1] not in existing_keys]
-    if new_rows_to_append:
-        for tr in new_rows_to_append:
-            ws.append_row(tr)
-            rows.append(tr)
+    ws = sh.worksheet("Cele_i_Strategia")
+    rows = ws.get_all_values()
 
     config = {}
     races = []
     vacations_and_blocks = []
-    training_rules_and_ideas = []
+    training_rules = []
+    mesocycles = []
     today = datetime.date.today()
 
-    for r in rows[1:]:
+    for r in rows:
         if len(r) < 2 or not r[0].strip():
             continue
-        entry_type = r[0].strip().upper()
-        name = r[1].strip()
+        col0 = r[0].strip()
+        col0_up = col0.upper()
+
+        # Pomijamy wiersze nagłówkowe
+        if col0_up in ["MEZOCYKL / FAZA", "TYP_WPISU"]:
+            continue
+
+        # 1. Wiersze tabeli Mezocykli
+        if col0_up.startswith("MEZOCYKL") or col0_up.startswith("BLOK SPECJALNY"):
+            mesocycles.append({
+                "faza": col0,
+                "okres": r[1].strip() if len(r) > 1 else "",
+                "tygodnie": r[2].strip() if len(r) > 2 else "",
+                "cel": r[3].strip() if len(r) > 3 else "",
+                "objetosc_km": r[4].strip() if len(r) > 4 else "",
+                "uklad_tygodnia": r[5].strip() if len(r) > 5 else "",
+                "kluczowe_jednostki": r[6].strip() if len(r) > 6 else ""
+            })
+            continue
+
+        # 2. Wiersze tabeli Konfiguracji / Startów / Urlopów / Reguł
+        name = r[1].strip() if len(r) > 1 else ""
         val_or_date = r[2].strip() if len(r) > 2 else ""
         dist = r[3].strip() if len(r) > 3 else ""
         goal = r[4].strip() if len(r) > 4 else ""
         notes = r[5].strip() if len(r) > 5 else ""
 
-        if name == "Wpisz rozważane zawody":
-            continue
-
-        if entry_type == "KONFIGURACJA":
+        if col0_up == "KONFIGURACJA":
             config[name] = {
                 "wartosc": val_or_date,
                 "szczegoly": f"{dist} | {goal} | {notes}".strip(" |")
             }
-        elif "START" in entry_type:
+        elif "START" in col0_up:
             days_left = None
-            phase = "Planowanie długoterminowe"
             try:
                 race_date = datetime.datetime.strptime(val_or_date[:10], "%Y-%m-%d").date()
                 days_left = (race_date - today).days
-                weeks_left = round(days_left / 7, 1)
-                if days_left < 0:
-                    phase = "Zakończony"
-                elif weeks_left <= 2:
-                    phase = "Tapering (Ostrzenie formy / redukcja objętości)"
-                elif weeks_left <= 6:
-                    phase = "Peak (Szczyt formy / specyfika startowa)"
-                elif weeks_left <= 12:
-                    phase = "Build (Rozbudowa wytrzymałości tempowej i progowej)"
-                else:
-                    phase = "Base (Budowa bazy tlenowej, siły i ekonomii biegu)"
             except ValueError:
                 pass
 
             if days_left is None or days_left >= -7:
                 races.append({
-                    "typ": entry_type,
+                    "typ": col0_up,
                     "nazwa": name,
                     "data": val_or_date,
                     "dni_do_startu": days_left,
-                    "faza_makrocyklu": phase,
                     "dystans": dist,
                     "cel": goal,
                     "uwagi": notes
                 })
-        elif any(k in entry_type for k in ["URLOP", "WYJAZD", "NIEDOSTEPNOSC", "PRZERWA"]):
+        elif any(k in col0_up for k in ["URLOP", "WYJAZD", "NIEDOSTEPNOSC", "PRZERWA"]):
             vacations_and_blocks.append({
-                "typ": entry_type,
+                "typ": col0_up,
                 "nazwa": name,
                 "okres": val_or_date,
                 "szczegoly": f"{dist} | {goal} | {notes}".strip(" |")
             })
         else:
-            training_rules_and_ideas.append({
-                "kategoria": entry_type,
+            training_rules.append({
+                "kategoria": col0_up,
                 "klucz": name,
                 "wartosc": val_or_date,
                 "szczegoly": f"{dist} | {goal} | {notes}".strip(" |")
             })
 
-    return config, races, vacations_and_blocks, training_rules_and_ideas
+    return config, races, vacations_and_blocks, training_rules, mesocycles
 
 
-def auto_color_and_fetch_calendar(calendar_id, days_ahead=10):
-    """
-    1. Automatycznie nadaje kolory wydarzeniom w Google Calendar wg słów kluczowych (rozszerzenie auto-kolorujące).
-    2. Filtruje wydarzenia wg reguł:
-       - Ignoruje wydarzenia innych organizatorów, gdzie Twój status != 'accepted' (np. Terapia ze statusem 'tentative').
-       - Rozpoznaje 'Biuro' jako ramy pracy stacjonarnej.
-    """
+def fetch_calendar_context(calendar_id, days_ahead=10):
+    """Pobiera wyłącznie odczyt wydarzeń z Google Calendar (kolorowaniem zajmuje się calendar_organizer.py)."""
     if not calendar_id or "@" not in calendar_id:
-        return ["Brak skonfigurowanego adresu Kalendarza Google."]
+        return [], []
 
     try:
         creds = get_credentials(["https://www.googleapis.com/auth/calendar"])
         creds.refresh(Request())
-        headers = {
-            "Authorization": f"Bearer {creds.token}",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": f"Bearer {creds.token}"}
 
         now = datetime.datetime.now(datetime.timezone.utc)
         time_min = now.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -176,51 +154,20 @@ def auto_color_and_fetch_calendar(calendar_id, days_ahead=10):
             "timeMax": time_max,
             "singleEvents": True,
             "orderBy": "startTime",
-            "maxResults": 80
+            "maxResults": 100
         }
         r = requests.get(base_url, headers=headers, params=params, timeout=15)
         if r.status_code != 200:
-            return [f"Kalendarz niedostępny (kod {r.status_code})."]
+            return [f"Kalendarz niedostępny (kod {r.status_code})."], []
 
-        items = r.json().get("items", [])
+        raw_items = r.json().get("items", [])
         events_summary = []
 
-        for ev in items:
+        for ev in raw_items:
             summary = ev.get("summary", "Zajęty termin")
-            if summary.startswith("[AI Coach]") or "AI Coach]" in summary:
+            if "AI Coach]" in summary:
                 continue
 
-            ev_id = ev.get("id")
-            current_color = ev.get("colorId", "")
-            s_low = summary.lower()
-
-            # --- AUTO-COLORING WG TWOJEJ PALETY ---
-            desired_color = None
-            if "biuro" in s_low:
-                desired_color = "5"   # Bananowy (Biuro)
-            elif any(k in s_low for k in ["praca", "work", "call", "daily"]):
-                desired_color = "9"   # Jagodowy (Czas pracy)
-            elif any(k in s_low for k in ["lekarz", "odczulanie", "dentysta", "badania", "ortopeda", "fizjo"]):
-                desired_color = "4"   # Flamingowy (Lekarze)
-            elif any(k in s_low for k in ["urlop", "wyjazd", "lot ", "rzym", "wakacje"]):
-                desired_color = "11"  # Pomidorowy (Urlopy/Wyjazdy)
-            elif any(k in s_low for k in ["terapia", "claudia", "kwiatuszek"]):
-                desired_color = "7"   # Pawi / Baby Blue (Informacyjne / Claudia)
-            elif any(k in s_low for k in ["spotkanie", "kolacja", "randka", "kino", "urodziny"]):
-                desired_color = "3"   # Winogronowy (Spotkania)
-
-            if desired_color and current_color != desired_color and ev.get("organizer", {}).get("self", False):
-                try:
-                    requests.patch(
-                        f"{base_url}/{ev_id}",
-                        headers=headers,
-                        json={"colorId": desired_color},
-                        timeout=8
-                    )
-                except Exception:
-                    pass
-
-            # --- FILTROWANIE DLA AI COACHA ---
             is_self_organizer = ev.get("organizer", {}).get("self", False)
             attendees = ev.get("attendees", [])
             my_status = "accepted"
@@ -229,202 +176,194 @@ def auto_color_and_fetch_calendar(calendar_id, days_ahead=10):
                     my_status = att.get("responseStatus", "needsAction")
                     break
 
-            # Jeśli organizatorem jest ktoś inny, a Ty nie kliknąłeś "Tak" (np. Terapia = tentative/declined), ignorujemy
             if not is_self_organizer and my_status != "accepted":
                 continue
 
+            s_low = summary.lower()
             transparency = ev.get("transparency", "opaque")
             start = ev.get("start", {}).get("dateTime", ev.get("start", {}).get("date", ""))
             end = ev.get("end", {}).get("dateTime", ev.get("end", {}).get("date", ""))
 
             if "biuro" in s_low:
                 tag = "[PRACA Z BIURA - trening możliwy rano lub po 17:30]"
+            elif any(k in s_low for k in ["gym", "siłownia", "silownia"]):
+                tag = "[WPISANA SIŁOWNIA W KALENDARZU]"
             elif transparency == "transparent":
-                tag = "[WYDARZENIE INFORMACYJNE - nie blokuje treningu]"
+                tag = "[INFORMACYJNE - nie blokuje treningu]"
             else:
                 tag = "[ZAJĘTY TERMIN]"
 
             events_summary.append(f"{start[:16]} -> {end[:16]}: {summary} {tag}")
 
-        return events_summary if events_summary else ["Brak zaplanowanych wydarzeń na najbliższe dni."]
+        return events_summary, raw_items
     except Exception as e:
-        return [f"Nie udało się pobrać kalendarza: {e}"]
+        return [f"Błąd odczytu kalendarza: {e}"], []
 
 
-def estimate_workout_duration_minutes(steps_code):
-    """Szacuje czas trwania treningu w minutach na podstawie kroków."""
-    if not steps_code or steps_code.upper() == "REST":
-        return 60
-    total_min = 0.0
+# ==============================================================================
+# TODO-06: AUTOMATYCZNY AUDYT WYKONANIA TRENINGU (PLAN VS WYKONANIE)
+# ==============================================================================
+def parse_planned_steps_summary(steps_code):
+    if not steps_code or steps_code.strip().upper() == "REST":
+        return {"is_run": False, "planned_km": 0.0, "hr_target": None, "pace_target": None}
+
+    total_km = 0.0
+    hr_targets = []
+    pace_targets = []
+
     for line in steps_code.splitlines():
-        m_min = re.search(r"(\d+(?:\.\d+)?)\s*min", line, re.IGNORECASE)
-        m_sec = re.search(r"(\d+)\s*s(?:ek)?\b", line, re.IGNORECASE)
-        m_km = re.search(r"(\d+(?:\.\d+)?)\s*km", line, re.IGNORECASE)
-        m_m = re.search(r"(\d+)\s*m\b", line, re.IGNORECASE)
-        if m_min:
-            total_min += float(m_min.group(1))
-        elif m_sec:
-            total_min += float(m_sec.group(1)) / 60.0
-        elif m_km:
-            total_min += float(m_km.group(1)) * 5.5  # średnio 5:30/km
+        l_strip = line.strip()
+        if not any(l_strip.lower().startswith(k) for k in ["warmup", "interval", "recovery", "cooldown"]):
+            continue
+        m_km = re.search(r"(\d+(?:\.\d+)?)\s*km\b", l_strip, re.IGNORECASE)
+        m_m = re.search(r"(\d+)\s*m\b", l_strip, re.IGNORECASE)
+        m_hr = re.search(r"(\d+\s*-\s*\d+)\s*bpm", l_strip, re.IGNORECASE)
+        m_pace = re.search(r"(\d+:\d{2}\s*-\s*\d+:\d{2})", l_strip)
+
+        if m_km:
+            total_km += float(m_km.group(1))
         elif m_m:
-            total_min += (float(m_m.group(1)) / 1000.0) * 5.0
-    return max(45, int(round(total_min + 15, -1)))  # +15 min na rozgrzewkę/prysznic
+            total_km += float(m_m.group(1)) / 1000.0
+
+        if "interval" in l_strip.lower():
+            if m_hr:
+                hr_targets.append(m_hr.group(1).replace(" ", "") + " bpm")
+            if m_pace:
+                pace_targets.append(m_pace.group(1).replace(" ", "") + "/km")
+
+    return {
+        "is_run": True,
+        "planned_km": round(total_km, 2),
+        "hr_target": hr_targets[0] if hr_targets else None,
+        "pace_target": pace_targets[0] if pace_targets else None
+    }
 
 
-def find_optimal_workout_slot(items_on_day, target_date_str, duration_mins):
+def format_pace_min_km(moving_mins, dist_km):
+    if not moving_mins or not dist_km or dist_km <= 0:
+        return "brak"
+    pace_float = moving_mins / dist_km
+    mins = int(pace_float)
+    secs = int(round((pace_float - mins) * 60))
+    if secs == 60:
+        mins += 1
+        secs = 0
+    return f"{mins}:{secs:02d}/km"
+
+
+def audit_past_workouts(treningi_sheet, existing_rows, activities_by_date):
     """
-    Dobiera optymalną godzinę treningu:
-    - Pn-Pt: po zakończeniu wydarzenia 'Czas pracy' / 'Biuro' (+30 min buforu), domyślnie 17:30.
-    - Sob-Niedz: nie wcześniej niż o 09:00, z ominięciem kolizji w kalendarzu.
+    TODO-06: Sprawdza zaplanowane treningi z przeszłości (oraz z dzisiaj, jeśli aktywność już wpadła),
+    porównuje je z zakładką 'Aktywnosci' i zapisuje wynik audytu w kolumnach Status i Notatka_Trenera.
     """
-    target_dt = datetime.datetime.strptime(target_date_str, "%Y-%m-%d").date()
-    is_weekend = target_dt.weekday() >= 5
+    today = datetime.date.today()
+    audit_reports = []
 
-    busy_intervals = []
-    work_end_hour_min = None
-
-    for ev in items_on_day:
-        summary = str(ev.get("summary", "")).lower()
-        if "ai coach]" in summary:
+    for idx, row in enumerate(existing_rows):
+        if len(row) < 4 or not row[0].strip():
             continue
-
-        is_self = ev.get("organizer", {}).get("self", False)
-        attendees = ev.get("attendees", [])
-        my_status = "accepted"
-        for att in attendees:
-            if att.get("self"):
-                my_status = att.get("responseStatus", "accepted")
-                break
-        if not is_self and my_status != "accepted":
-            continue
-
-        start_str = ev.get("start", {}).get("dateTime", "")
-        end_str = ev.get("end", {}).get("dateTime", "")
-        if not start_str or not end_str:
-            continue
+        row_num = idx + 2
+        d_str = row[0].strip()
+        w_name = row[1].strip() if len(row) > 1 else ""
+        w_code = row[2].strip() if len(row) > 2 else ""
+        status = row[3].strip() if len(row) > 3 else ""
+        coach_note = row[4].strip() if len(row) > 4 else ""
 
         try:
-            s_dt = datetime.datetime.fromisoformat(start_str[:19])
-            e_dt = datetime.datetime.fromisoformat(end_str[:19])
+            w_date = datetime.datetime.strptime(d_str, "%Y-%m-%d").date()
         except ValueError:
             continue
 
-        if any(k in summary for k in ["czas pracy", "biuro", "praca", "work"]):
-            work_end_hour_min = e_dt + datetime.timedelta(minutes=30)
-            busy_intervals.append((s_dt, e_dt))
-        elif ev.get("transparency", "opaque") != "transparent":
-            busy_intervals.append((s_dt, e_dt))
+        if w_date > today:
+            continue
 
-    busy_intervals.sort(key=lambda x: x[0])
+        # Jeśli wiersz był już wcześniej rozliczony, tylko przekazujemy go do kontekstu AI
+        if any(status.startswith(prefix) for prefix in ["Zrealizowane", "Zmodyfikowane", "Pominięte"]):
+            if (today - w_date).days <= 7:
+                audit_reports.append({"data": d_str, "plan": w_name, "status": status, "notatka": coach_note})
+            continue
 
-    if is_weekend:
-        candidate_start = datetime.datetime.combine(target_dt, datetime.time(9, 0))
-    else:
-        if work_end_hour_min:
-            candidate_start = work_end_hour_min
+        day_acts = activities_by_date.get(d_str, [])
+        # Jeśli to dzisiejszy dzień i jeszcze nie ma zarejestrowanej aktywności, czekamy do wieczora/jutra
+        if w_date == today and not day_acts:
+            continue
+
+        planned_info = parse_planned_steps_summary(w_code)
+        w_low = w_name.lower()
+        new_status = None
+        audit_tag = ""
+
+        if planned_info["is_run"]:
+            runs = [a for a in day_acts if "running" in str(a.get("Typ", "")).lower()]
+            if runs:
+                run = runs[0]
+                act_km = safe_float(run.get("Dystans_Km"), 0.0)
+                act_min = safe_float(run.get("Czas_Ruchu_Min"), safe_float(run.get("Czas_Calkowity_Min"), 0.0))
+                act_hr = safe_float(run.get("Srednie_HR"))
+                max_hr = safe_float(run.get("Max_HR"))
+                act_load = safe_float(run.get("Obciazenie_Treningowe_Load"))
+                act_pace = format_pace_min_km(act_min, act_km)
+
+                plan_km = planned_info["planned_km"]
+                km_ratio = (act_km / plan_km) if plan_km > 0 else 1.0
+                if 0.75 <= km_ratio <= 1.35:
+                    new_status = "Zrealizowane ✅"
+                else:
+                    new_status = "Zmodyfikowane ⚠️"
+
+                target_desc = planned_info["hr_target"] or planned_info["pace_target"] or "wg planu"
+                audit_tag = (
+                    f"[AUDYT WYKONANIA: Wykonano {act_km} km (plan: {plan_km} km), "
+                    f"śr. tempo {act_pace}, śr. HR {int(act_hr) if act_hr else '?'} bpm "
+                    f"(max {int(max_hr) if max_hr else '?'} bpm, cel: {target_desc}), "
+                    f"Load: {round(act_load, 1) if act_load else '?'}]"
+                )
+            elif day_acts:
+                other_types = ", ".join(str(a.get("Nazwa", a.get("Typ", ""))) for a in day_acts)
+                new_status = "Zmodyfikowane ⚠️ (Inna aktywność)"
+                audit_tag = f"[AUDYT WYKONANIA: Zamiast biegu wykonano: {other_types}]"
+            else:
+                new_status = "Pominięte ❌"
+                audit_tag = "[AUDYT WYKONANIA: Brak zarejestrowanego biegu w Garminie w tym dniu]"
+
         else:
-            candidate_start = datetime.datetime.combine(target_dt, datetime.time(17, 30))
+            # Planowany był dzień bez biegu (REST: Siłownia, Rower, Basen lub Regeneracja)
+            if any(k in w_low for k in ["siłownia", "silownia", "gym", "siła"]):
+                gyms = [a for a in day_acts if "strength" in str(a.get("Typ", "")).lower()]
+                if gyms:
+                    g = gyms[0]
+                    dur = safe_float(g.get("Czas_Calkowity_Min"), 0.0)
+                    avg_hr = safe_float(g.get("Srednie_HR"))
+                    ld = safe_float(g.get("Obciazenie_Treningowe_Load"))
+                    new_status = "Zrealizowane ✅ (Siłownia)"
+                    audit_tag = f"[AUDYT WYKONANIA: Wykonano {g.get('Nazwa', 'Siłownia')} - czas {round(dur)} min, śr. HR {int(avg_hr) if avg_hr else '?'} bpm, Load {round(ld, 1) if ld else '?'}]"
+                elif day_acts:
+                    other_types = ", ".join(str(a.get("Nazwa", a.get("Typ", ""))) for a in day_acts)
+                    new_status = "Zmodyfikowane ⚠️"
+                    audit_tag = f"[AUDYT WYKONANIA: Zamiast siłowni zarejestrowano: {other_types}]"
+                else:
+                    new_status = "Pominięte ❌"
+                    audit_tag = "[AUDYT WYKONANIA: Brak zarejestrowanej sesji siłowej w Garminie]"
+            else:
+                # Czysty dzień regeneracji lub lekki cross-training
+                if not day_acts:
+                    new_status = "Zrealizowane ✅ (Regeneracja)"
+                    audit_tag = "[AUDYT WYKONANIA: Pełna regeneracja zgodnie z planem]"
+                else:
+                    other_types = ", ".join(str(a.get("Nazwa", a.get("Typ", ""))) for a in day_acts)
+                    new_status = "Zrealizowane ✅ (Aktywna regeneracja)"
+                    audit_tag = f"[AUDYT WYKONANIA: Aktywności w dniu bez biegu: {other_types}]"
 
-    # Szukamy pierwszego wolnego okna bez kolizji ze spotkaniami
-    latest_start = datetime.datetime.combine(target_dt, datetime.time(21, 0))
-    while candidate_start <= latest_start:
-        candidate_end = candidate_start + datetime.timedelta(minutes=duration_mins)
-        collision = False
-        for b_start, b_end in busy_intervals:
-            if candidate_start < b_end and candidate_end > b_start:
-                candidate_start = b_end + datetime.timedelta(minutes=20)
-                collision = True
-                break
-        if not collision:
-            break
+        if new_status:
+            updated_note = f"{coach_note}\n{audit_tag}".strip() if audit_tag not in coach_note else coach_note
+            treningi_sheet.update(values=[[new_status, updated_note]], range_name=f"D{row_num}:E{row_num}")
+            row[3] = new_status
+            row[4] = updated_note
+            print(f"Audyt TODO-06 ({d_str} - {w_name}): {new_status}")
+            audit_reports.append({"data": d_str, "plan": w_name, "status": new_status, "audyt": audit_tag})
 
-    return candidate_start, candidate_start + datetime.timedelta(minutes=duration_mins)
+    return audit_reports
 
-
-def sync_workout_to_google_calendar(calendar_id, target_date, workout_name, steps_code, coach_note, guest_email=""):
-    """
-    Zapisuje trening w Google Calendar o wyliczonej godzinie, z nowymi kolorami i opcjonalnym zaproszeniem gościa.
-    """
-    if not calendar_id or "@" not in calendar_id:
-        return
-
-    try:
-        creds = get_credentials(["https://www.googleapis.com/auth/calendar"])
-        creds.refresh(Request())
-        headers = {
-            "Authorization": f"Bearer {creds.token}",
-            "Content-Type": "application/json"
-        }
-
-        base_url = f"https://www.googleapis.com/calendar/v3/calendars/{requests.utils.quote(calendar_id)}/events"
-        next_day = (datetime.datetime.strptime(target_date, "%Y-%m-%d").date() + datetime.timedelta(days=1)).isoformat()
-
-        params = {
-            "timeMin": f"{target_date}T00:00:00Z",
-            "timeMax": f"{next_day}T00:00:00Z",
-            "singleEvents": True
-        }
-        r_list = requests.get(base_url, headers=headers, params=params, timeout=15)
-        items_on_day = r_list.json().get("items", []) if r_list.status_code == 200 else []
-
-        for item in items_on_day:
-            if "AI Coach]" in str(item.get("summary", "")):
-                ev_id = item.get("id")
-                requests.delete(f"{base_url}/{ev_id}", headers=headers, timeout=10)
-
-        w_low = workout_name.lower()
-        is_pure_rest = False
-
-        if any(k in w_low for k in ["siłownia", "silownia", "gym", "siła"]):
-            color_id = "4"   # Kwiat wiśni / Flaming - Siłownia
-            icon = "🏋️"
-        elif any(k in w_low for k in ["basen", "pływanie", "swim"]):
-            color_id = "7"   # Paw - Basen
-            icon = "🏊"
-        elif any(k in w_low for k in ["rower", "gravel", "bike", "kolars"]):
-            color_id = "9"   # Jagodowy - Rower
-            icon = "🚴"
-        elif steps_code.upper() == "REST" or any(k in w_low for k in ["regeneracja", "wolne", "odpoczynek"]):
-            color_id = "8"   # Grafit - Informacyjne / Regeneracja
-            icon = "🧘"
-            is_pure_rest = True
-        else:
-            color_id = "10"  # Bazyliowy - Bieganie
-            icon = "🏃"
-
-        event_body = {
-            "summary": f"{icon} [AI Coach] {workout_name}",
-            "description": f"Kroki treningu:\n{steps_code}\n\nAnaliza trenera AI:\n{coach_note}",
-            "colorId": color_id
-        }
-
-        if is_pure_rest:
-            event_body["start"] = {"date": target_date}
-            event_body["end"] = {"date": next_day}
-            event_body["transparency"] = "transparent"
-        else:
-            dur_mins = estimate_workout_duration_minutes(steps_code)
-            start_dt, end_dt = find_optimal_workout_slot(items_on_day, target_date, dur_mins)
-            event_body["start"] = {"dateTime": start_dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": "Europe/Warsaw"}
-            event_body["end"] = {"dateTime": end_dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": "Europe/Warsaw"}
-
-        if guest_email and "@" in guest_email and not is_pure_rest:
-            event_body["attendees"] = [{"email": guest_email.strip()}]
-
-        r_ins = requests.post(base_url, headers=headers, json=event_body, timeout=15)
-        if r_ins.status_code == 403 and "attendees" in event_body:
-            print("Konto usługi nie ma uprawnień do wysyłania zaproszeń e-mail - zapisuję wydarzenie bez pola 'attendees'...")
-            event_body.pop("attendees", None)
-            r_ins = requests.post(base_url, headers=headers, json=event_body, timeout=15)
-
-        if r_ins.status_code in [200, 201]:
-            print(f"Zapisano w Google Calendar ({target_date}): {icon} [AI Coach] {workout_name}")
-        else:
-            print(f"Uwaga: Google Calendar zwrócił kod {r_ins.status_code}: {r_ins.text[:200]}")
-    except Exception as e:
-        print(f"Błąd zapisu do Google Calendar: {e}")
-        
 
 def analyze_full_history(wellness_sheet, activities_sheet):
     w_all = wellness_sheet.get_all_values()
@@ -481,14 +420,19 @@ def analyze_full_history(wellness_sheet, activities_sheet):
     daily_load = {}
     weekly_stats = {}
     recent_activities = []
+    activities_by_date = {}
 
     for row in a_rows:
         padded = row[:25] + [""] * max(0, 25 - len(row))
         act = dict(zip(a_headers, padded))
+        d_str = act.get("Data", "").strip()
         try:
-            a_date = datetime.datetime.strptime(act.get("Data", ""), "%Y-%m-%d").date()
+            a_date = datetime.datetime.strptime(d_str, "%Y-%m-%d").date()
         except ValueError:
             continue
+
+        if (today - a_date).days <= 30:
+            activities_by_date.setdefault(d_str, []).append(act)
 
         load = safe_float(act.get("Obciazenie_Treningowe_Load"), 0.0)
         dist = safe_float(act.get("Dystans_Km"), 0.0)
@@ -540,7 +484,7 @@ def analyze_full_history(wellness_sheet, activities_sheet):
         "Objetosc_Ostatnie_8_Tygodni": sorted_weeks
     }
 
-    return wellness_summary, recent_wellness, load_metrics, recent_activities
+    return wellness_summary, recent_wellness, load_metrics, recent_activities, activities_by_date
 
 
 def ensure_treningi_headers(treningi_sheet):
@@ -556,6 +500,177 @@ def ensure_treningi_headers(treningi_sheet):
     if len(all_values[0]) < 5:
         treningi_sheet.update_cell(1, 5, "Notatka_Trenera")
     return all_values[1:]
+
+
+def estimate_workout_duration_minutes(steps_code):
+    if not steps_code or steps_code.upper() == "REST":
+        return 60
+    total_min = 0.0
+    for line in steps_code.splitlines():
+        m_min = re.search(r"(\d+(?:\.\d+)?)\s*min", line, re.IGNORECASE)
+        m_sec = re.search(r"(\d+)\s*s(?:ek)?\b", line, re.IGNORECASE)
+        m_km = re.search(r"(\d+(?:\.\d+)?)\s*km", line, re.IGNORECASE)
+        m_m = re.search(r"(\d+)\s*m\b", line, re.IGNORECASE)
+        if m_min:
+            total_min += float(m_min.group(1))
+        elif m_sec:
+            total_min += float(m_sec.group(1)) / 60.0
+        elif m_km:
+            total_min += float(m_km.group(1)) * 5.5
+        elif m_m:
+            total_min += (float(m_m.group(1)) / 1000.0) * 5.0
+    return max(45, int(round(total_min + 15, -1)))
+
+
+def find_optimal_workout_slot(items_on_day, target_date_str, duration_mins):
+    target_dt = datetime.datetime.strptime(target_date_str, "%Y-%m-%d").date()
+    is_weekend = target_dt.weekday() >= 5
+
+    busy_intervals = []
+    work_end_dt = None
+
+    for ev in items_on_day:
+        summary = str(ev.get("summary", "")).lower()
+        if "ai coach]" in summary:
+            continue
+
+        is_self = ev.get("organizer", {}).get("self", False)
+        attendees = ev.get("attendees", [])
+        my_status = "accepted"
+        for att in attendees:
+            if att.get("self"):
+                my_status = att.get("responseStatus", "accepted")
+                break
+        if not is_self and my_status != "accepted":
+            continue
+
+        start_str = ev.get("start", {}).get("dateTime", "")
+        end_str = ev.get("end", {}).get("dateTime", "")
+        if not start_str or not end_str:
+            continue
+
+        try:
+            s_dt = datetime.datetime.fromisoformat(start_str[:19])
+            e_dt = datetime.datetime.fromisoformat(end_str[:19])
+        except ValueError:
+            continue
+
+        if any(k in summary for k in ["czas pracy", "biuro", "work time", "praca"]):
+            work_end_dt = e_dt + datetime.timedelta(minutes=30)
+            busy_intervals.append((s_dt, e_dt))
+        elif ev.get("transparency", "opaque") != "transparent":
+            busy_intervals.append((s_dt, e_dt))
+
+    busy_intervals.sort(key=lambda x: x[0])
+
+    if is_weekend:
+        candidate_start = datetime.datetime.combine(target_dt, datetime.time(9, 0))
+    else:
+        candidate_start = work_end_dt if work_end_dt else datetime.datetime.combine(target_dt, datetime.time(17, 30))
+
+    latest_start = datetime.datetime.combine(target_dt, datetime.time(21, 0))
+    while candidate_start <= latest_start:
+        candidate_end = candidate_start + datetime.timedelta(minutes=duration_mins)
+        collision = False
+        for b_start, b_end in busy_intervals:
+            if candidate_start < b_end and candidate_end > b_start:
+                candidate_start = b_end + datetime.timedelta(minutes=20)
+                collision = True
+                break
+        if not collision:
+            break
+
+    return candidate_start, candidate_start + datetime.timedelta(minutes=duration_mins)
+
+
+def sync_workout_to_google_calendar(calendar_id, target_date, workout_name, steps_code, coach_note, guest_email=""):
+    """
+    Zapisuje lub aktualizuje wydarzenie [AI Coach] w Google Calendar.
+    Jeśli w danym dniu masz już ręcznie wpisane wydarzenie tej samej kategorii (np. '🏋️ gym B'),
+    nie tworzy duplikatu.
+    """
+    if not calendar_id or "@" not in calendar_id:
+        return
+
+    try:
+        creds = get_credentials(["https://www.googleapis.com/auth/calendar"])
+        creds.refresh(Request())
+        headers = {
+            "Authorization": f"Bearer {creds.token}",
+            "Content-Type": "application/json"
+        }
+
+        base_url = f"https://www.googleapis.com/calendar/v3/calendars/{requests.utils.quote(calendar_id)}/events"
+        next_day = (datetime.datetime.strptime(target_date, "%Y-%m-%d").date() + datetime.timedelta(days=1)).isoformat()
+
+        params = {
+            "timeMin": f"{target_date}T00:00:00Z",
+            "timeMax": f"{next_day}T00:00:00Z",
+            "singleEvents": True
+        }
+        r_list = requests.get(base_url, headers=headers, params=params, timeout=15)
+        items_on_day = r_list.json().get("items", []) if r_list.status_code == 200 else []
+
+        # Usuwamy poprzedni wpis [AI Coach] z tego dnia
+        for item in items_on_day:
+            if "AI Coach]" in str(item.get("summary", "")):
+                ev_id = item.get("id")
+                requests.delete(f"{base_url}/{ev_id}", headers=headers, timeout=10)
+
+        w_low = workout_name.lower()
+        is_pure_rest = False
+
+        # Sprawdzamy, czy w kalendarzu istnieje już ręczny wpis na tę samą aktywność (np. 'gym B')
+        if any(k in w_low for k in ["siłownia", "silownia", "gym", "siła"]):
+            for item in items_on_day:
+                s_item = str(item.get("summary", "")).lower()
+                if "ai coach]" not in s_item and any(g in s_item for g in ["gym", "siłownia", "silownia"]):
+                    print(f"W Google Calendar na {target_date} istnieje już ręczny wpis '{item.get('summary')}' - pomijam tworzenie duplikatu.")
+                    return
+            color_id = "4"   # Kwiat wiśni (Siłownia)
+            icon = "🏋️"
+        elif any(k in w_low for k in ["basen", "pływanie", "swim"]):
+            color_id = "1"   # Basen
+            icon = "🏊"
+        elif any(k in w_low for k in ["rower", "gravel", "bike", "kolars"]):
+            color_id = "3"   # Rower
+            icon = "🚴"
+        elif steps_code.upper() == "REST" or any(k in w_low for k in ["regeneracja", "wolne", "odpoczynek"]):
+            color_id = "8"   # Grafit (Informacyjne / Regeneracja)
+            icon = "🧘"
+            is_pure_rest = True
+        else:
+            color_id = "10"  # Bazylia (Bieganie)
+            icon = "🏃"
+
+        event_body = {
+            "summary": f"{icon} [AI Coach] {workout_name}",
+            "description": f"Kroki treningu:\n{steps_code}\n\nAnaliza trenera AI:\n{coach_note}",
+            "colorId": color_id
+        }
+
+        if is_pure_rest:
+            event_body["start"] = {"date": target_date}
+            event_body["end"] = {"date": next_day}
+            event_body["transparency"] = "transparent"
+        else:
+            dur_mins = estimate_workout_duration_minutes(steps_code)
+            start_dt, end_dt = find_optimal_workout_slot(items_on_day, target_date, dur_mins)
+            event_body["start"] = {"dateTime": start_dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": "Europe/Warsaw"}
+            event_body["end"] = {"dateTime": end_dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": "Europe/Warsaw"}
+
+        if guest_email and "@" in guest_email and not is_pure_rest:
+            event_body["attendees"] = [{"email": guest_email.strip()}]
+
+        r_ins = requests.post(base_url, headers=headers, json=event_body, timeout=15)
+        if r_ins.status_code == 403 and "attendees" in event_body:
+            event_body.pop("attendees", None)
+            r_ins = requests.post(base_url, headers=headers, json=event_body, timeout=15)
+
+        if r_ins.status_code in [200, 201]:
+            print(f"Zapisano w Google Calendar ({target_date}): {icon} [AI Coach] {workout_name}")
+    except Exception as e:
+        print(f"Błąd zapisu do Google Calendar ({target_date}): {e}")
 
 
 def get_dynamic_high_end_models():
@@ -604,7 +719,6 @@ def get_dynamic_high_end_models():
 
         scored.sort(key=lambda x: x[0], reverse=True)
         ranked = [name for _, name in scored]
-        print(f"Dynamiczny ranking najlepszych modeli: {ranked}")
         if ranked:
             return ranked
     except Exception as e:
@@ -618,44 +732,57 @@ def parse_json_response(raw_text):
     return json.loads(cleaned)
 
 
-def ask_holistic_ai_coach(context_payload, target_date, day_name):
+# ==============================================================================
+# TODO-05: GENERATOR I ADAPTATOR KROCZĄCEGO PLANU 7-DNIOWEGO
+# ==============================================================================
+def ask_holistic_7day_coach(context_payload, horizon_days):
     if not GEMINI_API_KEY:
         raise ValueError("Brak klucza GEMINI_LLM_API_KEY!")
 
     compact_context = clean_empty_values(context_payload)
 
-    prompt = f"""Jesteś elitarnym, holistycznym trenerem personalnym AI (bieganie długodystansowe, przygotowanie siłowe Gym A/B, kolarstwo gravelowe, basen) prowadzącym zawodnika długofalowo przez kolejne sezony.
+    prompt = f"""Jesteś elitarnym, holistycznym trenerem personalnym AI (bieganie długodystansowe, przygotowanie siłowe Gym A/B, gravel, basen) prowadzącym zawodnika długofalowo.
 
-ZADANIE:
-Przeanalizuj pełny kontekst fizjologiczny, zasady z zakładki Cele_i_Strategia (w tym urlopy, wytyczne i rozważane starty), kalendarz prywatny oraz obciążenie i zaplanuj optymalną decyzję treningową na jutro: {target_date} ({day_name}).
+ZADANIE (TODO-05 + TODO-06):
+1. Przeanalizuj raport wykonania ostatnich treningów (`audyt_wykonania_planu_TODO_06`), trendy HRV/RHR/Snu, wskaźniki CTL/ATL/ACWR, plan mezocykli z `Cele_i_Strategia` oraz grafik w Google Calendar.
+2. Zaplanuj lub zaadaptuj KROCZĄCY PLAN 7-DNIOWY dla następujących dat:
+{json.dumps(horizon_days, ensure_ascii=False)}
 
 PEŁNY KONTEKST ZAWODNIKA (JSON):
 {json.dumps(compact_context, ensure_ascii=False)}
 
 BEZWZGLĘDNE WYTYCZNE TRENERSKIE:
-1. BIEGI SPOKOJNE NA TĘTNO (BPM), AKCENTY NA TEMPO (MIN/KM):
-   - Dla WSZYSTKICH biegów spokojnych (Easy Run, Bieg Tlenowy, Recovery Run, spokojny Long Run) oraz dla rozgrzewek (warmup) i schłodzeń (cooldown) ZAWSZE podawaj cel jako ZAKRES TĘTNA w formacie `XXX-YYYbpm` (np. `warmup, 1km, 115-132bpm`, `interval, 5km, 125-145bpm`, `cooldown, 1km, 115-132bpm`). NIGDY nie podawaj tempa min/km dla biegów spokojnych!
-   - Wyłącznie dla biegów jakościowych (Tempo Półmaratońskie, Bieg Progowy, Interwały VO2max, Rytmy) podawaj w odcinkach głównych (`interval`) widełki tempa `M:SS-M:SS` (np. `interval, 2km, 4:10-4:20`).
-2. URLOPY, WYJAZDY I KALENDARZ:
-   - Sprawdź sekcję `urlopy_i_niedostepnosci` oraz `wydarzenia_google_calendar`. Dostosuj mikrocykl do wyjazdów (np. przed urlopem możesz zaplanować nieco mocniejszy bodziec, a w trakcie urlopu regenerację).
-3. TRENING HYBRYDOWY I PRZEPLATANIE DYSCYPLIN:
-   - Zawodnik trenuje 2-3x w tygodniu siłowo (Gym A / Gym B), biega 3x w tygodniu oraz przeplata to rowerem lub basenem. Jeśli na jutro przypada Siłownia, Rower, Basen lub pełny Odpoczynek (dzień bez biegania), wpisz odpowiednią nazwę w `workout_name` (np. `Siłownia - Sesja B` lub `Basen Regeneracyjny`), a w polu `steps` wpisz dokładnie słowo: REST
+1. STABILNOŚĆ PLANU VS ADAPTACJA:
+   - Jeśli na dany dzień w `obecnie_zaplanowane_7_dni` istnieje już trening i nie koliduje on z nowym wydarzeniem w Google Calendar, a regeneracja (HRV/Sen) oraz uwagi zawodnika są w normie -> ZACHOWAJ dotychczasową koncepcję i parametry tego dnia, aby nie zmieniać planu bez powodu.
+   - Jeśli jednak w Google Calendar pojawiła się kolizja (np. wpisana ręcznie siłownia `gym B` w piątek lub `gym A` w poniedziałek), spadło HRV lub wczoraj pominięto jednostkę -> ZAADAPTUJ rozkład dni w tygodniu!
+2. BIEGI SPOKOJNE NA TĘTNO (BPM), AKCENTY NA TEMPO (MIN/KM):
+   - Dla WSZYSTKICH biegów spokojnych (Easy Run, Bieg Tlenowy, Recovery, spokojny Long Run) oraz dla rozgrzewek (`warmup`) i schłodzeń (`cooldown`) ZAWSZE podawaj cel jako ZAKRES TĘTNA w formacie `XXX-YYYbpm` (np. `warmup, 1km, 115-132bpm`, `interval, 4km, 125-145bpm`, `cooldown, 1km, 115-132bpm`). NIGDY nie podawaj tempa min/km dla biegów spokojnych!
+   - Wyłącznie dla biegów jakościowych (Tempo HM, Próg, Interwały VO2max, Przebieżki) podawaj w odcinkach głównych (`interval`) widełki tempa `M:SS-M:SS` (np. `interval, 2km, 4:10-4:20`).
+3. ROZKŁAD TYGODNIA (HYBRYDA):
+   - Trzymaj się konfiguracji z `Cele_i_Strategia` (np. 2x Siłownia Gym A/B, 2-3x Bieg, opcjonalnie 1x Basen/Rower i dni pełnej regeneracji).
+   - Nigdy nie planuj mocnych interwałów biegowych dzień po ciężkiej siłowni nóg (Gym A / przysiad / RDL).
+   - Dla dni bez biegania (Siłownia, Rower, Basen, Regeneracja) wpisz odpowiednią nazwę w `workout_name` (np. `Siłownia - Sesja B`), a w polu `steps` wpisz dokładnie słowo: REST
 4. SKŁADNIA PARSERA GARMINA (DLA DNI BIEGOWYCH):
-   Każdy krok w osobnej linii zaczynający się od: `warmup`, `interval`, `recovery`, `cooldown`.
-   Po przecinku dystans (`2km`, `400m`) lub czas (`15min`, `90s`), a po kolejnym przecinku cel (`125-145bpm` dla tlenu lub `4:10-4:20` dla akcentu). Bez zapisu pętli typu "3x".
+   Każdy krok w osobnej linii zaczynający się od: `warmup`, `interval`, `recovery`, `cooldown`. Bez zapisu pętli typu "4x" (rozpisz każde powtórzenie w osobnej linii).
 
 Zwróć odpowiedź WYŁĄCZNIE jako czysty obiekt JSON w formacie:
 {{
-  "workout_name": "Krótka nazwa treningu (np. Spokojny Bieg Tlenowy Z2 (6 km) lub Siłownia - Sesja B)",
-  "steps": "wieloliniowy kod kroków dla Garmina LUB słowo REST jeśli jutro dzień bez biegania",
-  "coach_memory_note": "Zwięzła notatka analityczna (2-3 zdania): uzasadnienie decyzji i plan na kolejne 3-4 dni mikrocyklu."
+  "weekly_strategy_summary": "Krótkie podsumowanie strategii na najbliższe 7 dni oraz wnioski z audytu ostatnich treningów (2-3 zdania)",
+  "seven_day_plan": [
+    {{
+      "date": "YYYY-MM-DD",
+      "workout_name": "Krótka nazwa treningu",
+      "steps": "wieloliniowy kod kroków dla Garmina LUB słowo REST",
+      "coach_memory_note": "Zwięzłe uzasadnienie jednostki na ten dzień (1-2 zdania)"
+    }}
+  ]
 }}"""
 
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "responseMimeType": "application/json",
-            "temperature": 0.25
+            "temperature": 0.2
         }
     }
 
@@ -672,46 +799,45 @@ Zwróć odpowiedź WYŁĄCZNIE jako czysty obiekt JSON w formacie:
             permanently_blocked.clear()
             models_to_try = list(active_models)
 
-        print(f"\n--- RUNDA {round_num} POSZUKIWANIA DOSTĘPNEGO MODELU ---")
-
         for model_name in models_to_try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
-            print(f"[Runda {round_num}] Konsultacja z modelem: {model_name} (timeout=120s)...")
+            print(f"[Runda {round_num}] Generowanie 7-dniowego planu przez model: {model_name}...")
 
             try:
                 response = requests.post(url, json=payload, timeout=120)
-
                 if response.status_code == 200:
                     data = response.json()
                     raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
                     parsed = parse_json_response(raw_text)
-                    print(f"SUKCES! Plan wygenerowany przez model: {model_name} w rundzie {round_num}.")
+                    print(f"SUKCES! Plan 7-dniowy wygenerowany przez model: {model_name}.")
                     return parsed
-
                 elif response.status_code == 429:
-                    err_text = response.text
-                    if "limit: 0" in err_text or "limit:0" in err_text:
+                    if "limit: 0" in response.text or "limit:0" in response.text:
                         permanently_blocked.add(model_name)
-                    else:
-                        print(f"Model {model_name} chwilowo limitowany (429).")
-
                 elif response.status_code in [400, 404]:
                     permanently_blocked.add(model_name)
-
                 elif response.status_code in [500, 502, 503, 504]:
-                    print(f"Serwer modelu {model_name} przeciążony ({response.status_code}). Czekam 6s...")
                     time.sleep(6)
-
-            except requests.exceptions.Timeout:
-                print(f"Model {model_name} przekroczył 120s (Timeout).")
             except Exception as e:
                 print(f"Błąd przy modelu {model_name}: {e}")
 
-        wait_between_rounds = min(15 * round_num, 45)
-        time.sleep(wait_between_rounds)
+        time.sleep(min(15 * round_num, 45))
         round_num += 1
 
-    raise RuntimeError("Przekroczono 15-minutowy limit oczekiwania na odpowiedź modeli Gemini.")
+    raise RuntimeError("Przekroczono limit oczekiwania na odpowiedź modeli Gemini.")
+
+
+def normalize_steps_only(code_str):
+    if not code_str:
+        return ""
+    lines = [l.strip() for l in code_str.strip().splitlines() if l.strip()]
+    if not lines:
+        return ""
+    if lines[0].upper() == "REST":
+        return "REST"
+    if re.match(r"^\d{4}-\d{2}-\d{2}\b", lines[0]):
+        return "\n".join(lines[1:]).strip()
+    return "\n".join(lines).strip()
 
 
 def main():
@@ -722,95 +848,120 @@ def main():
     activities_sheet = sh.worksheet("Aktywnosci")
     treningi_sheet = sh.worksheet("Treningi")
 
-    athlete_config, races_schedule, vacations_and_blocks, training_rules = ensure_goals_sheet(sh)
+    athlete_config, races_schedule, vacations_and_blocks, training_rules, mesocycles = read_goals_and_strategy(sh)
     cal_email = athlete_config.get("Kalendarz_Email", {}).get("wartosc", DEFAULT_CALENDAR_ID)
+    guest_email = athlete_config.get("Gosc_Treningu_Email", {}).get("wartosc", "")
 
-    print("Porządkowanie kolorów i pobieranie grafiku z Google Calendar...")
-    calendar_events = auto_color_and_fetch_calendar(cal_email, days_ahead=10)
+    print("Pobieranie grafiku z Google Calendar na 10 dni...")
+    calendar_events, _ = fetch_calendar_context(cal_email, days_ahead=10)
 
     print("Wyliczanie wskaźników CTL/ATL/ACWR i trendów wieloletnich...")
-    wellness_summary, recent_wellness, load_metrics, recent_activities = analyze_full_history(
+    wellness_summary, recent_wellness, load_metrics, recent_activities, activities_by_date = analyze_full_history(
         wellness_sheet, activities_sheet
     )
 
     existing_rows = ensure_treningi_headers(treningi_sheet)
-    recent_planned = []
-    for r in existing_rows[-7:]:
-        recent_planned.append({
-            "Data": r[0] if len(r) > 0 else "",
-            "Nazwa": r[1] if len(r) > 1 else "",
-            "Status": r[3] if len(r) > 3 else "",
-            "Notatka_Trenera": r[4] if len(r) > 4 else ""
-        })
 
-    tomorrow = datetime.date.today() + datetime.timedelta(days=1)
-    target_date = tomorrow.isoformat()
+    # 1. TODO-06: Automatyczny audyt wykonania przeszłych i dzisiejszych treningów
+    print("Wykonywanie audytu Plan vs Wykonanie (TODO-06)...")
+    audit_reports = audit_past_workouts(treningi_sheet, existing_rows, activities_by_date)
+
+    # 2. TODO-05: Przygotowanie horyzontu 7-dniowego (od jutra przez 7 dni)
+    today = datetime.date.today()
     days_pl = ["Poniedziałek", "Wtorek", "Środa", "Czwartek", "Piątek", "Sobota", "Niedziela"]
-    day_name = days_pl[tomorrow.weekday()]
+    horizon_days = []
+    for offset in range(1, 8):
+        d = today + datetime.timedelta(days=offset)
+        horizon_days.append({"date": d.isoformat(), "day_of_week": days_pl[d.weekday()]})
 
-    existing_row_idx = None
-    existing_name = ""
-    existing_code = ""
-    for idx, row in enumerate(existing_rows):
-        if row and str(row[0]).strip() == target_date:
-            existing_row_idx = idx + 2
-            existing_name = str(row[1]).strip() if len(row) > 1 else ""
-            existing_code = str(row[2]).strip() if len(row) > 2 else ""
-            break
+    existing_by_date = {}
+    for idx, r in enumerate(existing_rows):
+        if r and r[0].strip():
+            existing_by_date[r[0].strip()] = {
+                "row_num": idx + 2,
+                "name": r[1].strip() if len(r) > 1 else "",
+                "code": r[2].strip() if len(r) > 2 else "",
+                "status": r[3].strip() if len(r) > 3 else "",
+                "note": r[4].strip() if len(r) > 4 else ""
+            }
 
-    # Wymuszamy aktualizację, jeśli jutrzejszy bieg spokojny ma wpisane tempo zamiast tętna (bpm)
-    needs_hr_conversion = (
-        existing_row_idx is not None
-        and any(w in existing_name.lower() for w in ["spokojny", "easy", "tlenowy", "recovery"])
-        and "bpm" not in existing_code.lower()
-    )
-
-    default_note = "Samopoczucie w normie, brak dolegliwości."
-    if existing_row_idx and not needs_hr_conversion and USER_NOTES.strip() in ["", default_note, "Brak dodatkowych uwag, samopoczucie w normie."]:
-        print(f"Trening na jutro ({target_date}) jest już w arkuszu. Synchronizuję z Google Calendar...")
-        existing_steps = "\n".join(existing_code.splitlines()[1:]) if "\n" in existing_code else existing_code
-        existing_note = str(existing_rows[existing_row_idx - 2][4]).strip() if len(existing_rows[existing_row_idx - 2]) > 4 else ""
-        sync_workout_to_google_calendar(cal_email, target_date, existing_name, existing_steps, existing_note)
-        return
+    currently_planned_7d = []
+    for hd in horizon_days:
+        dt_str = hd["date"]
+        if dt_str in existing_by_date:
+            ex = existing_by_date[dt_str]
+            currently_planned_7d.append({
+                "date": dt_str,
+                "workout_name": ex["name"],
+                "steps": normalize_steps_only(ex["code"]),
+                "status": ex["status"],
+                "coach_memory_note": ex["note"]
+            })
 
     context_payload = {
-        "dzisiejsza_data": datetime.date.today().isoformat(),
+        "dzisiejsza_data": today.isoformat(),
         "uwagi_zawodnika_dzis": USER_NOTES,
         "konfiguracja_zawodnika": athlete_config,
+        "plan_mezocykli": mesocycles,
         "reguly_i_preferencje_treningowe": training_rules,
         "urlopy_i_niedostepnosci": vacations_and_blocks,
         "kalendarz_startow_wieloletni": races_schedule,
         "wydarzenia_google_calendar_10_dni": calendar_events,
+        "audyt_wykonania_planu_TODO_06": audit_reports,
+        "obecnie_zaplanowane_7_dni": currently_planned_7d,
         "wskazniki_obciazenia_CTL_ATL_ACWR": load_metrics,
         "trendy_wellness_7d_vs_60d": wellness_summary,
         "ostatnie_7_dni_wellness": recent_wellness,
-        "ostatnie_12_aktywnosci": recent_activities,
-        "ostatnie_zaplanowane_treningi_i_notatki_AI": recent_planned
+        "ostatnie_12_aktywnosci": recent_activities
     }
 
-    ai_plan = ask_holistic_ai_coach(context_payload, target_date, day_name)
+    ai_response = ask_holistic_7day_coach(context_payload, horizon_days)
+    seven_day_plan = ai_response.get("seven_day_plan", [])
+    weekly_summary = ai_response.get("weekly_strategy_summary", "")
+    if weekly_summary:
+        print(f"Strategia tygodnia AI: {weekly_summary}")
 
-    workout_name = ai_plan.get("workout_name", "Trening AI").strip()
-    steps_code = ai_plan.get("steps", "interval, 6km, 125-145bpm").strip()
-    coach_note = ai_plan.get("coach_memory_note", "").strip()
+    # 3. Zapis i inteligentna adaptacja 7 dni w Arkuszu oraz w Google Calendar
+    for day_item in seven_day_plan:
+        target_date = str(day_item.get("date", "")).strip()
+        if not target_date:
+            continue
 
-    if steps_code.upper() == "REST" or "REST" in steps_code.upper().splitlines()[0]:
-        full_workout_code = "REST"
-        status_flag = "Do aktualizacji" if existing_row_idx else "Zaplanowane (Bez biegu)"
-    else:
-        full_workout_code = f"{target_date} {workout_name}\n{steps_code}"
-        status_flag = "Do aktualizacji" if existing_row_idx else "Do wgrania"
+        workout_name = str(day_item.get("workout_name", "Trening AI")).strip()
+        steps_raw = str(day_item.get("steps", "REST")).strip()
+        coach_note = str(day_item.get("coach_memory_note", "")).strip()
 
-    new_row = [target_date, workout_name, full_workout_code, status_flag, coach_note]
+        is_rest = (steps_raw.upper() == "REST" or steps_raw.upper().splitlines()[0] == "REST")
+        if is_rest:
+            full_workout_code = "REST"
+            clean_new_steps = "REST"
+        else:
+            clean_new_steps = normalize_steps_only(steps_raw)
+            full_workout_code = f"{target_date} {workout_name}\n{clean_new_steps}"
 
-    if existing_row_idx:
-        treningi_sheet.update(values=[new_row], range_name=f"A{existing_row_idx}:E{existing_row_idx}")
-        print(f"ZAKTUALIZOWANO trening w Google Sheets na {target_date} -> {workout_name}")
-    else:
-        treningi_sheet.append_row(new_row)
-        print(f"DODANO nowy trening w Google Sheets na {target_date} -> {workout_name}")
+        if target_date in existing_by_date:
+            ex = existing_by_date[target_date]
+            old_steps = normalize_steps_only(ex["code"])
+            old_name = ex["name"]
 
-    sync_workout_to_google_calendar(cal_email, target_date, workout_name, steps_code, coach_note)
+            # Sprawdzamy, czy AI zmieniło strukturę kroków lub dyscyplinę względem istniejącego wpisu
+            steps_changed = (old_steps != clean_new_steps) or (old_name != workout_name)
+
+            if not steps_changed and ex["status"].startswith("Zaplanowane"):
+                print(f"[{target_date}] Plan bez zmian ({workout_name}) - zachowuję status '{ex['status']}'.")
+                continue
+
+            status_flag = "Do aktualizacji" if (not is_rest or old_steps != "REST") else "Zaplanowane (Bez biegu)"
+            row_values = [target_date, workout_name, full_workout_code, status_flag, coach_note]
+            treningi_sheet.update(values=[row_values], range_name=f"A{ex['row_num']}:E{ex['row_num']}")
+            print(f"[{target_date}] ZAADAPTOWANO trening -> {workout_name} (Status: {status_flag})")
+        else:
+            status_flag = "Zaplanowane (Bez biegu)" if is_rest else "Do wgrania"
+            row_values = [target_date, workout_name, full_workout_code, status_flag, coach_note]
+            treningi_sheet.append_row(row_values)
+            print(f"[{target_date}] DODANO nowy trening -> {workout_name} (Status: {status_flag})")
+
+        sync_workout_to_google_calendar(cal_email, target_date, workout_name, clean_new_steps, coach_note, guest_email)
 
 
 if __name__ == "__main__":
