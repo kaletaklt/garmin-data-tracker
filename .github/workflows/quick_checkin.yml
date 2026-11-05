@@ -1,1 +1,65 @@
 
+name: Mobile Subjective Check-In (Tasker)
+
+on:
+  workflow_dispatch:
+    inputs:
+      report_type:
+        description: 'Typ raportu (Rano_CheckIn / Po_Treningu / Wieczor)'
+        required: true
+        default: 'Rano_CheckIn'
+      energy_1_5:
+        description: 'Energia rano (1-5)'
+        required: false
+        default: ''
+      rpe_1_10:
+        description: 'RPE po treningu (1-10)'
+        required: false
+        default: ''
+      doms_info:
+        description: 'Bolesność mięśniowa DOMS (np. Brak / Nogi / Góra)'
+        required: false
+        default: 'Brak'
+      pain_info:
+        description: 'Dyskomfort lub kontuzja'
+        required: false
+        default: 'Brak'
+      user_note:
+        description: 'Notatka głosowa / tekstowa'
+        required: false
+        default: ''
+      trigger_replan:
+        description: 'Czy od razu przeliczyć plan AI Coach? (true/false)'
+        required: false
+        default: 'true'
+
+jobs:
+  log_and_adapt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repozytorium
+        uses: actions/checkout@v4
+
+      - name: Konfiguracja Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Instalacja zależności
+        run: pip install garminconnect gspread google-auth requests
+
+      - name: Zapis raportu i adaptacja planu
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
+          GEMINI_LLM_API_KEY: ${{ secrets.GEMINI_LLM_API_KEY }}
+          REPORT_TYPE: ${{ github.event.inputs.report_type }}
+          ENERGY_1_5: ${{ github.event.inputs.energy_1_5 }}
+          RPE_1_10: ${{ github.event.inputs.rpe_1_10 }}
+          DOMS_INFO: ${{ github.event.inputs.doms_info }}
+          PAIN_INFO: ${{ github.event.inputs.pain_info }}
+          USER_NOTE: ${{ github.event.inputs.user_note }}
+          TRIGGER_REPLAN: ${{ github.event.inputs.trigger_replan }}
+        run: python log_subjective.py
