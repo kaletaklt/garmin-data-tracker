@@ -961,8 +961,10 @@ def main():
     cal_email = athlete_config.get("Kalendarz_Email", {}).get("wartosc", DEFAULT_CALENDAR_ID)
     guest_email = athlete_config.get("Gosc_Treningu_Email", {}).get("wartosc", "")
 
-    print("Pobieranie grafiku z Google Calendar na 10 dni...")
-    calendar_events, _ = fetch_calendar_context(cal_email, days_ahead=10)
+    print("Pobieranie grafiku i sztywnych dni siłowni z Google Calendar na 10 dni...")
+    calendar_events, raw_calendar_items = fetch_calendar_context(cal_email, days_ahead=10)
+    fixed_gym_days = extract_fixed_gym_days(raw_calendar_items)
+    print(f"Wykryte sztywne sesje siłowe w kalendarzu: {fixed_gym_days}")
 
     print("Wyliczanie wskaźników CTL/ATL/ACWR i trendów wieloletnich...")
     wellness_summary, recent_wellness, load_metrics, recent_activities, activities_by_date = analyze_full_history(
@@ -1009,69 +1011,4 @@ def main():
 
     context_payload = {
         "dzisiejsza_data": today.isoformat(),
-        "uwagi_zawodnika_dzis": USER_NOTES,
-        "konfiguracja_zawodnika": athlete_config,
-        "plan_mezocykli": mesocycles,
-        "reguly_i_preferencje_treningowe": training_rules,
-        "urlopy_i_niedostepnosci": vacations_and_blocks,
-        "kalendarz_startow_wieloletni": races_schedule,
-        "wydarzenia_google_calendar_10_dni": calendar_events,
-        "audyt_wykonania_planu_TODO_06": audit_reports,
-        "obecnie_zaplanowane_7_dni": currently_planned_7d,
-        "wskazniki_obciazenia_CTL_ATL_ACWR": load_metrics,
-        "trendy_wellness_7d_vs_60d": wellness_summary,
-        "ostatnie_7_dni_wellness": recent_wellness,
-        "ostatnie_12_aktywnosci": recent_activities
-    }
-
-    ai_response = ask_holistic_7day_coach(context_payload, horizon_days)
-    seven_day_plan = ai_response.get("seven_day_plan", [])
-    weekly_summary = ai_response.get("weekly_strategy_summary", "")
-    if weekly_summary:
-        print(f"Strategia tygodnia AI: {weekly_summary}")
-
-    # 3. Zapis i inteligentna adaptacja 7 dni w Arkuszu oraz w Google Calendar
-    for day_item in seven_day_plan:
-        target_date = str(day_item.get("date", "")).strip()
-        if not target_date:
-            continue
-
-        workout_name = str(day_item.get("workout_name", "Trening AI")).strip()
-        steps_raw = str(day_item.get("steps", "REST")).strip()
-        coach_note = str(day_item.get("coach_memory_note", "")).strip()
-
-        is_rest = (steps_raw.upper() == "REST" or steps_raw.upper().splitlines()[0] == "REST")
-        if is_rest:
-            full_workout_code = "REST"
-            clean_new_steps = "REST"
-        else:
-            clean_new_steps = normalize_steps_only(steps_raw)
-            full_workout_code = f"{target_date} {workout_name}\n{clean_new_steps}"
-
-        if target_date in existing_by_date:
-            ex = existing_by_date[target_date]
-            old_steps = normalize_steps_only(ex["code"])
-            old_name = ex["name"]
-
-            # Sprawdzamy, czy AI zmieniło strukturę kroków lub dyscyplinę względem istniejącego wpisu
-            steps_changed = (old_steps != clean_new_steps) or (old_name != workout_name)
-
-            if not steps_changed and ex["status"].startswith("Zaplanowane"):
-                print(f"[{target_date}] Plan bez zmian ({workout_name}) - zachowuję status '{ex['status']}'.")
-                continue
-
-            status_flag = "Do aktualizacji" if (not is_rest or old_steps != "REST") else "Zaplanowane (Bez biegu)"
-            row_values = [target_date, workout_name, full_workout_code, status_flag, coach_note]
-            treningi_sheet.update(values=[row_values], range_name=f"A{ex['row_num']}:E{ex['row_num']}")
-            print(f"[{target_date}] ZAADAPTOWANO trening -> {workout_name} (Status: {status_flag})")
-        else:
-            status_flag = "Zaplanowane (Bez biegu)" if is_rest else "Do wgrania"
-            row_values = [target_date, workout_name, full_workout_code, status_flag, coach_note]
-            treningi_sheet.append_row(row_values)
-            print(f"[{target_date}] DODANO nowy trening -> {workout_name} (Status: {status_flag})")
-
-        sync_workout_to_google_calendar(cal_email, target_date, workout_name, clean_new_steps, coach_note, guest_email)
-
-
-if __name__ == "__main__":
-    main()
+        "uwagi_zawodnika_dzis
