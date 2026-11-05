@@ -585,9 +585,13 @@ def find_optimal_workout_slot(items_on_day, target_date_str, duration_mins):
 
 def sync_workout_to_google_calendar(calendar_id, target_date, workout_name, steps_code, coach_note, guest_email=""):
     """
-    Zapisuje lub aktualizuje wydarzenie [AI Coach] w Google Calendar.
-    Jeśli w danym dniu masz już ręcznie wpisane wydarzenie tej samej kategorii (np. '🏋️ gym B'),
-    nie tworzy duplikatu.
+    Zapisuje lub aktualizuje wydarzenie [AI Coach] w Google Calendar zgodnie z nową paletą:
+    - Lekarze: 2 (Jasnozielony / Szałwia) - w calendar_organizer.py
+    - Bieganie: 10 (Ciemnozielony / Bazylia)
+    - Rower: 6 (Pomarańczowy / Mandarynka)
+    - Basen: 7 (Niebieski / Paw)
+    - Siłownia: 11 (Czerwony / Pomidor)
+    - Regeneracja / Informacyjne: 8 (Szary / Grafit)
     """
     if not calendar_id or "@" not in calendar_id:
         return
@@ -611,7 +615,7 @@ def sync_workout_to_google_calendar(calendar_id, target_date, workout_name, step
         r_list = requests.get(base_url, headers=headers, params=params, timeout=15)
         items_on_day = r_list.json().get("items", []) if r_list.status_code == 200 else []
 
-        # Usuwamy poprzedni wpis [AI Coach] z tego dnia
+        # Usuwamy poprzedni wpis [AI Coach] z tego dnia przed aktualizacją
         for item in items_on_day:
             if "AI Coach]" in str(item.get("summary", "")):
                 ev_id = item.get("id")
@@ -620,27 +624,27 @@ def sync_workout_to_google_calendar(calendar_id, target_date, workout_name, step
         w_low = workout_name.lower()
         is_pure_rest = False
 
-        # Sprawdzamy, czy w kalendarzu istnieje już ręczny wpis na tę samą aktywność (np. 'gym B')
+        # Dobór koloru i ikony wg dyscypliny + ochrona przed duplikatem ręcznie wpisanej siłowni
         if any(k in w_low for k in ["siłownia", "silownia", "gym", "siła"]):
             for item in items_on_day:
                 s_item = str(item.get("summary", "")).lower()
                 if "ai coach]" not in s_item and any(g in s_item for g in ["gym", "siłownia", "silownia"]):
-                    print(f"W Google Calendar na {target_date} istnieje już ręczny wpis '{item.get('summary')}' - pomijam tworzenie duplikatu.")
+                    print(f"W Google Calendar na {target_date} istnieje już ręczny wpis '{item.get('summary')}' - pomijam duplikat.")
                     return
-            color_id = "4"   # Kwiat wiśni (Siłownia)
+            color_id = "11"  # Czerwony (Pomidor) - Siłownia
             icon = "🏋️"
         elif any(k in w_low for k in ["basen", "pływanie", "swim"]):
-            color_id = "1"   # Basen
+            color_id = "7"   # Niebieski (Paw) - Basen
             icon = "🏊"
         elif any(k in w_low for k in ["rower", "gravel", "bike", "kolars"]):
-            color_id = "3"   # Rower
+            color_id = "6"   # Pomarańczowy (Mandarynka) - Rower
             icon = "🚴"
         elif steps_code.upper() == "REST" or any(k in w_low for k in ["regeneracja", "wolne", "odpoczynek"]):
-            color_id = "8"   # Grafit (Informacyjne / Regeneracja)
+            color_id = "8"   # Szary (Grafit) - Regeneracja / Informacyjne
             icon = "🧘"
             is_pure_rest = True
         else:
-            color_id = "10"  # Bazylia (Bieganie)
+            color_id = "10"  # Ciemnozielony (Bazylia) - Bieganie
             icon = "🏃"
 
         event_body = {
@@ -668,9 +672,12 @@ def sync_workout_to_google_calendar(calendar_id, target_date, workout_name, step
             r_ins = requests.post(base_url, headers=headers, json=event_body, timeout=15)
 
         if r_ins.status_code in [200, 201]:
-            print(f"Zapisano w Google Calendar ({target_date}): {icon} [AI Coach] {workout_name}")
+            print(f"Zapisano w Google Calendar ({target_date}): {icon} [AI Coach] {workout_name} (colorId={color_id})")
+        else:
+            print(f"Uwaga: Google Calendar zwrócił kod {r_ins.status_code}: {r_ins.text[:200]}")
     except Exception as e:
         print(f"Błąd zapisu do Google Calendar ({target_date}): {e}")
+
 
 
 def get_dynamic_high_end_models():
