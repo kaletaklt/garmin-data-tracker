@@ -13,11 +13,11 @@ CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", os.getenv("GARMIN_EMAIL", ""))
 CATEGORY_STYLE = {
     "BASEN":        {"colorId": "9",  "icon": "🏊"},  # Twoja etykieta: Basen
     "CZAS_PRACY":   {"colorId": "8",  "icon": "💻"},  # Twoja etykieta: Czas pracy (Brzoza/Szałwia)
-    "ROWER":        {"colorId": "6",  "icon": "🚴"},  # Twoja etykieta: Rower
+    "ROWER":        {"colorId": "5",  "icon": "🚴"},  # Twoja etykieta: Rower
     "SILOWNIA":     {"colorId": "11",  "icon": "🏋️"},  # Twoja etykieta: Siłownia (Kwiat wiśni)
-    "SPOTKANIA":    {"colorId": "5",  "icon": "👥"},  # Twoja etykieta: Spotkania (Cytryna)
+    "SPOTKANIA":    {"colorId": "3",  "icon": "👥"},  # Twoja etykieta: Spotkania (Cytryna)
     "BIURO":        {"colorId": "4",  "icon": "🏢"},  # Twoja etykieta: Biuro (Kakao)
-    "INFORMACYJNE": {"colorId": "3",  "icon": "ℹ️"},  # Twoja etykieta: Informacyjne (Grafit)
+    "INFORMACYJNE": {"colorId": "1",  "icon": "ℹ️"},  # Twoja etykieta: Informacyjne (Grafit)
     "LEKARZ":       {"colorId": "2",  "icon": "🩺"},  # Lekarz (lub "2" / "10" zależnie od Twojej etykiety)
     "BIEGANIE":     {"colorId": "10", "icon": "🏃"},  # Bieganie (Bazylia)
     "URLOP":        {"colorId": "3", "icon": "✈️"},  # Urlop / Wyjazdy (Pomidor)
