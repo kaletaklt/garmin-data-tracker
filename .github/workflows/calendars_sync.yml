@@ -2,8 +2,6 @@ name: Calendars Sync (Google <-> Garmin + Organizer)
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 7,13,19 * * *'
 
 jobs:
   sync_calendars:
