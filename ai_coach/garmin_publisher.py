@@ -4,14 +4,12 @@ Zasady rozwiązywania konfliktów w kalendarzu Garmin Connect:
 1. Jeśli w danym dniu w kalendarzu Garmin jest już trening siłowy (lub inny trening poza bieganiem) -> pomijamy dzień (status: `Zaplanowane (Bez biegu)`).
 2. Jeśli w danym dniu w kalendarzu Garmin jest już INNY bieg (niebędący wcześniej wgranym biegiem `ai_coach` wg kolumny F `Garmin_Workout_ID`):
    - NIE usuwamy go automatycznie.
-   - Wysyłamy powiadomienie push przez Join do Taskera (`send_garmin_conflict_alert`) z prośbą o usunięcie starego biegu.
-   - Zapisujemy w arkuszu status `Konflikt ⚠️ (Usuń stary bieg w Garminie)`.
+   - Zapisujemy w arkuszu status `Konflikt ⚠️ (Usuń stary bieg w Garminie)` oraz notatkę.
 3. Jeśli w danym dniu był wcześniejszy bieg wgrany przez `ai_coach` (zgodny `Garmin_Workout_ID`), a plan uległ zmianie -> podmieniamy go na nową wersję.
 """
 import re
 
 from common.garmin_calendar import delete_workout, upload_and_schedule
-from common.notify import send_garmin_conflict_alert
 from common.workout_parser import build_running_workout, is_rest_code
 
 
@@ -109,9 +107,8 @@ def publish_seven_day_plan_to_garmin(
             if foreign_title.strip().lower() != workout_name.lower():
                 print(
                     f"[{target_date}] KONFLIKT w kalendarzu Garmin: istnieje bieg '{foreign_title}', "
-                    f"a AI Coach chce zaplanować '{workout_name}'. Wysyłam prośbę o usunięcie starego biegu."
+                    f"a AI Coach chce zaplanować '{workout_name}'. Zapisuję status konfliktu w arkuszu."
                 )
-                send_garmin_conflict_alert(target_date, foreign_title)
                 conflict_note = f"{coach_note}\n[KONFLIKT GARMIN: W kalendarzu jest już bieg '{foreign_title}' – usuń go, aby wgrać '{workout_name}']".strip()
                 row_values = [
                     target_date,

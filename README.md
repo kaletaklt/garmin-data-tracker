@@ -1,6 +1,6 @@
 # Garmin AI Personal Coach (`garmin-data-tracker`)
 
-Autonomiczny system trenerski łączący **Garmin Connect**, **Google Sheets**, **Google Calendar**, **Tasker (Join)** oraz **Google Gemini**.
+Autonomiczny system trenerski łączący **Garmin Connect**, **Google Sheets**, **Google Calendar**, **Tasker** oraz **Google Gemini**.
 
 ## Architektura (3 moduły domenowe)
 
@@ -9,7 +9,7 @@ garmin-data-tracker/
 ├── collector/          # 1. Zbieranie danych z zegarka (Wellness + Aktywności), ankiet RPE/Energii i detekcja anomalii
 ├── ai_coach/           # 2. Mózg operacji: analityka CTL/ATL, audyt wykonania, plan 7-dniowy Gemini i zapis do Garmin Connect
 ├── calendars_sync/     # 3. Integracja kalendarzy: Google <-> Garmin Connect oraz auto-organizer kolorów i ikon
-└── common/             # Współdzielona infrastruktura (autoryzacja, parser kroków, API Garmin/Google, Join)
+└── common/             # Współdzielona infrastruktura (autoryzacja, parser kroków, API Garmin/Google)
 ```
 
 ### Uruchamianie modułów

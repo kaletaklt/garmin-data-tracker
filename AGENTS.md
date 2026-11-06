@@ -24,7 +24,7 @@ Autonomiczny system trenerski łączący Garmin Connect, Google Sheets, Google C
 - `ai_coach/gemini_client.py`: Klient Gemini i generator kroczącego planu 7-dniowego (TODO-05).
 - `ai_coach/garmin_publisher.py`: Zapisuje plan w zakładce `Treningi` (kolumny A–F, gdzie kolumna F to `Garmin_Workout_ID`) oraz publikuje treningi biegowe bezpośrednio do kalendarza Garmin Connect:
   - Jeśli w kalendarzu Garmin jest już trening siłowy (lub inny poza bieganiem) -> pomija ten dzień (`Zaplanowane (Bez biegu)`).
-  - Jeśli w kalendarzu Garmin jest już **inny bieg** niż ten należący do `ai_coach` -> **nie usuwa go**, wysyła push Join do Taskera (`garmin_alert=:=data=:=nazwa`) z prośbą o usunięcie starego biegu i ustawia status `Konflikt ⚠️ (Usuń stary bieg w Garminie)`.
+  - Jeśli w kalendarzu Garmin jest już **inny bieg** niż ten należący do `ai_coach` -> **nie usuwa go** i ustawia status `Konflikt ⚠️ (Usuń stary bieg w Garminie)` oraz notatkę w arkuszu `Treningi`.
 - `ai_coach/tools/add_workout.py` i `ai_coach/tools/delete_workout.py`: Narzędzia CLI dla workflowów ręcznego dodawania i usuwania treningów z kalendarza Garmin.
 
 ### 3. `calendars_sync/` – Integracja i porządkowanie kalendarzy
@@ -34,7 +34,7 @@ Autonomiczny system trenerski łączący Garmin Connect, Google Sheets, Google C
   3. `calendars_sync/garmin_to_google.py`: Tworzy w Google Calendar lustrzane wydarzenia `[AI Coach]` dla zaplanowanych treningów z doborem optymalnego wolnego okna czasowego poza pracą i spotkaniami (bez duplikowania ręcznie wpisanej siłowni).
 
 ### 4. `common/` – Wspólna infrastruktura
-- `config.py`, `google_auth.py`, `sheets.py`, `garmin_auth.py`, `garmin_calendar.py`, `google_calendar.py`, `workout_parser.py`, `athlete_config.py`, `notify.py`.
+- `config.py`, `google_auth.py`, `sheets.py`, `garmin_auth.py`, `garmin_calendar.py`, `google_calendar.py`, `workout_parser.py`, `athlete_config.py`.
 
 ## Zasady dla agentów Antigravity
 1. Nigdy nie używaj `get_all_records()` na zakładce `Wellness` (zawiera dodatkowe kolumny z formułami MA7/MA30 po kolumnie 24) ani `Aktywnosci` (tnij do 25 kolumn). Zawsze używaj `get_all_values()`.
@@ -45,5 +45,5 @@ Autonomiczny system trenerski łączący Garmin Connect, Google Sheets, Google C
    - Dla dni bez biegania (siłownia, rower, basen, regeneracja) cały `Kod Treningu` ma wartość `REST`.
 3. Cykl życia statusów w zakładce `Treningi` (kolumny A–F: `Data`, `Nazwa`, `Kod Treningu`, `Status`, `Notatka_Trenera`, `Garmin_Workout_ID`):
    - `Zaplanowane` / `Zaplanowane (Bez biegu)` / `Do wgrania` -> nadawane przez `ai_coach/garmin_publisher.py` podczas publikacji planu 7-dniowego do Garmin Connect.
-   - `Konflikt ⚠️ (Usuń stary bieg w Garminie)` -> nadawany przez `ai_coach/garmin_publisher.py`, gdy w kalendarzu Garmin istnieje obcy bieg (wysyłany jest wówczas alert Join do Taskera).
+   - `Konflikt ⚠️ (Usuń stary bieg w Garminie)` -> nadawany przez `ai_coach/garmin_publisher.py`, gdy w kalendarzu Garmin istnieje obcy bieg.
    - `Zrealizowane ✅...` / `Zmodyfikowane ⚠️...` / `Pominięte ❌` -> nadawane przez `ai_coach/auditor.py` podczas audytu wykonania (TODO-06).

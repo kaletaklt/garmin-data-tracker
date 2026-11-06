@@ -46,8 +46,6 @@ jobs:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
           GEMINI_LLM_API_KEY: ${{ secrets.GEMINI_LLM_API_KEY }}
-          JOIN_API_KEY: ${{ secrets.JOIN_API_KEY }}
-          JOIN_DEVICE_ID: ${{ secrets.JOIN_DEVICE_ID }}
           REPORT_TYPE: 'Rano_CheckIn'
           ENERGY_1_5: ${{ github.event.inputs.energy_1_5 }}
           DOMS_INFO: ${{ github.event.inputs.doms_info }}

@@ -7,8 +7,6 @@ GARMIN_EMAIL = os.getenv("GARMIN_EMAIL")
 GARMIN_PASSWORD = os.getenv("GARMIN_PASSWORD")
 # Pusty sekret w GitHub Actions daje "", dlatego `or` zamiast domyślnej wartości getenv.
 GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID") or GARMIN_EMAIL or ""
-JOIN_API_KEY = os.getenv("JOIN_API_KEY")
-JOIN_DEVICE_ID = os.getenv("JOIN_DEVICE_ID")
 
 TIMEZONE = "Europe/Warsaw"
 

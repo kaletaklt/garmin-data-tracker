@@ -30,7 +30,5 @@ jobs:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
           GEMINI_LLM_API_KEY: ${{ secrets.GEMINI_LLM_API_KEY }}
-          JOIN_API_KEY: ${{ secrets.JOIN_API_KEY }}
-          JOIN_DEVICE_ID: ${{ secrets.JOIN_DEVICE_ID }}
           USER_NOTES: ${{ github.event.inputs.user_notes }}
         run: python -m ai_coach.main
