@@ -1,22 +1,22 @@
+"""Parser kroków treningowych (`Kod Treningu`) i budowniczy payloadu Garmin ExecutableStepDTO."""
 import re
-import os
-import sys
-from garmin_auth import GarminAuthenticator
+
+STEP_TYPES = ("warmup", "interval", "recovery", "cooldown")
+SPORT_TYPE_IDS = {"running": 1, "cycling": 2, "other": 3, "swimming": 4, "strength_training": 5}
+
 
 class WorkoutStepParser:
     def __init__(self):
         self.dist_re = re.compile(r'(\d+(?:\.\d+)?)\s*(km|m)\b', re.IGNORECASE)
         self.time_re = re.compile(r'(\d+(?:\.\d+)?)\s*(min|s|sek)\b', re.IGNORECASE)
         self.hr_re = re.compile(r'(\d+)\s*-\s*(\d+)\s*bpm', re.IGNORECASE)
-        
-        # Poprawiony, bardziej odporny regex tempa:
         # Obsługuje pełny zapis (3:45-4:20) oraz ucięte/uproszczone warianty (np. 3:45-4:/km)
         self.pace_re = re.compile(r'(\d+):(\d{2})\s*-\s*(\d+):(\d{0,2})\s*(?:min/km|/km)?', re.IGNORECASE)
 
     def parse(self, step_type: str, text: str) -> dict:
         parsed = {
             "step_type": step_type.strip(),
-            "condition_type": "lap.button", 
+            "condition_type": "lap.button",
             "condition_value": None,
             "target_type": "no.target",
             "target_value_1": None,
@@ -54,20 +54,17 @@ class WorkoutStepParser:
             parsed["target_type"] = "pace"
             m1, s1 = int(pace_match.group(1)), int(pace_match.group(2))
             m2, s2_str = pace_match.group(3), pace_match.group(4)
-            
             # Bezpieczne obsłużenie pustych lub uciętych sekund (np. gdy zczyta "4:")
             s2 = int(s2_str) if s2_str else 0
-            
+
             sec_per_km_1 = m1 * 60 + s1
             sec_per_km_2 = int(m2) * 60 + s2
-            
             if sec_per_km_1 > 0 and sec_per_km_2 > 0:
-                v1 = round(1000.0 / sec_per_km_1, 3) 
-                v2 = round(1000.0 / sec_per_km_2, 3) 
+                v1 = round(1000.0 / sec_per_km_1, 3)
+                v2 = round(1000.0 / sec_per_km_2, 3)
                 parsed["target_value_1"] = min(v1, v2)
                 parsed["target_value_2"] = max(v1, v2)
-            
-            # Dokładne oczyszczenie opisu z zapisu tempa i zbędnych końcówek typu /km lub min/km
+
             parsed["description"] = re.sub(r'\d+:\d{0,2}\s*-\s*\d+:\d{0,2}\s*(?:min/km|/km)?', '', parsed["description"]).strip()
 
         parsed["description"] = re.sub(r'\s+', ' ', parsed["description"]).strip()
@@ -79,13 +76,11 @@ class WorkoutStepParser:
 
 class GarminWorkoutBuilder:
     def __init__(self, workout_name: str, sport="running"):
+        sport_type = {"sportTypeId": SPORT_TYPE_IDS.get(sport, 1), "sportTypeKey": sport}
         self.workout = {
             "workoutName": workout_name,
-            "sportType": {
-                "sportTypeId": 1,
-                "sportTypeKey": sport
-            },
-            "workoutSegments": [{"segmentOrder": 1, "sportType": {"sportTypeId": 1, "sportTypeKey": sport}, "workoutSteps": []}]
+            "sportType": sport_type,
+            "workoutSegments": [{"segmentOrder": 1, "sportType": dict(sport_type), "workoutSteps": []}]
         }
         self.step_order = 1
 
@@ -128,88 +123,55 @@ class GarminWorkoutBuilder:
         return self.workout
 
 
-class WorkoutManager:
-    def __init__(self, garmin_client):
-        self.client = garmin_client
-
-    def upload_and_schedule(self, workout_payload: dict, target_date: str):
-        try:
-            print(f"Zapisywanie treningu: '{workout_payload['workoutName']}' w bibliotece Garmina...")
-            
-            response = self.client.upload_workout(workout_payload)
-            
-            workout_id = None
-            if isinstance(response, dict):
-                workout_id = response.get("workoutId")
-            elif hasattr(response, 'json'):
-                try:
-                    workout_id = response.json().get("workoutId")
-                except Exception:
-                    pass
-            
-            if not workout_id:
-                print("Brak bezpośredniego zwrotu ID. Zaciąganie listy treningów w celu zlokalizowania...")
-                try:
-                    workouts = self.client.get_workouts()
-                    for w in workouts:
-                        if w.get("workoutName") == workout_payload["workoutName"]:
-                            workout_id = w.get("workoutId")
-                            break
-                except Exception as e:
-                    print(f"Nie udało się pobrać listy treningów: {e}")
-                    
-            if not workout_id:
-                raise ValueError("Serwer przyjął trening, ale nie udało się odzyskać jego ID potrzebnego do kalendarza.")
-                
-            print(f"Trening pomyślnie zapisany (ID: {workout_id}). Przypisywanie do kalendarza na dzień {target_date}...")
-            
-            self.client.schedule_workout(workout_id, target_date)
-            print(f"SUKCES! Trening dodano i przypisano do kalendarza na dzień: {target_date}")
-            
-        except Exception as e:
-            print(f"Błąd krytyczny komunikacji z API Garmina: {e}")
-            sys.exit(1)
+def iter_step_lines(code_str):
+    """Zwraca pary (typ_kroku, tekst) z `Kod Treningu`. Linia nagłówka `YYYY-MM-DD Nazwa` jest pomijana."""
+    raw = (code_str or "").replace(r'\n', '\n')
+    for line in raw.split('\n'):
+        line = line.strip().lstrip(', ').strip()
+        parts = re.split(r'[\s,]+', line, maxsplit=1)
+        if len(parts) < 2:
+            continue
+        step_type = parts[0].lower()
+        if step_type in STEP_TYPES:
+            yield step_type, parts[1].lstrip(', ').strip()
 
 
-def main():
-    raw_workout_code = os.getenv("WORKOUT_CODE", "")
-    
-    if not raw_workout_code:
-        print("Błąd: Brak kodu treningu. Puste pole.")
-        sys.exit(1)
-
-    parts = re.split(r'\b(warmup|interval|recovery|cooldown)\s*,', raw_workout_code, flags=re.IGNORECASE)
-    
-    if len(parts) < 3:
-        print("Błąd: Nie rozpoznano segmentów. Oczekiwano identyfikatorów np. 'warmup,' lub 'interval,'.")
-        sys.exit(1)
-
-    prefix = parts[0].strip()
-    date_match = re.search(r'\b(\d{4}-\d{2}-\d{2})\b', prefix)
-    
-    if not date_match:
-        print("Błąd: Nie znaleziono daty w formacie YYYY-MM-DD.")
-        sys.exit(1)
-        
-    target_date = date_match.group(1)
-    workout_name = prefix.replace(target_date, '').strip()
-    
-    if not workout_name:
-        workout_name = "Nowy Trening Biegowy"
-
-    garmin_client = GarminAuthenticator().login()
-    manager = WorkoutManager(garmin_client)
+def build_running_workout(workout_name, code_str):
     parser = WorkoutStepParser()
     builder = GarminWorkoutBuilder(workout_name)
-
-    for i in range(1, len(parts), 2):
-        step_type = parts[i].lower()
-        text = parts[i+1]
-        parsed_step = parser.parse(step_type, text)
-        builder.add_step(parsed_step)
-
-    manager.upload_and_schedule(builder.get_payload(), target_date)
+    for step_type, text in iter_step_lines(code_str):
+        builder.add_step(parser.parse(step_type, text))
+    if builder.step_order == 1:
+        raise ValueError(f"Kod treningu '{workout_name}' nie zawiera żadnego kroku warmup/interval/recovery/cooldown.")
+    return builder.get_payload()
 
 
-if __name__ == "__main__":
-    main()
+def build_strength_workout(workout_name, description="Sesja siłowa z Google Calendar"):
+    """Minimalny trening siłowy (jeden krok do przycisku Lap) - znacznik zajętego dnia w kalendarzu Garmin."""
+    builder = GarminWorkoutBuilder(workout_name, sport="strength_training")
+    builder.add_step({
+        "step_type": "interval", "condition_type": "lap.button", "condition_value": None,
+        "target_type": "no.target", "target_value_1": None, "target_value_2": None,
+        "description": description,
+    })
+    return builder.get_payload()
+
+
+def is_rest_code(code_str):
+    code = (code_str or "").strip().upper()
+    return not code or code.startswith("REST")
+
+
+def planned_distance_km(code_str):
+    """Suma zaplanowanych kilometrów w krokach treningu (0.0 dla REST)."""
+    total = 0.0
+    if is_rest_code(code_str):
+        return total
+    for _, text in iter_step_lines(code_str):
+        m_km = re.search(r"(\d+(?:\.\d+)?)\s*km\b", text, re.IGNORECASE)
+        m_m = re.search(r"(\d+)\s*m\b", text, re.IGNORECASE)
+        if m_km:
+            total += float(m_km.group(1))
+        elif m_m:
+            total += float(m_m.group(1)) / 1000.0
+    return round(total, 2)

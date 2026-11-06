@@ -1,19 +1,10 @@
-
-name: Mobile Subjective Check-In (Tasker)
+name: Collector - 1. Poranny Raport (Wellness + Ankieta)
 
 on:
   workflow_dispatch:
     inputs:
-      report_type:
-        description: 'Typ raportu (Rano_CheckIn / Po_Treningu / Wieczor)'
-        required: true
-        default: 'Rano_CheckIn'
       energy_1_5:
         description: 'Energia rano (1-5)'
-        required: false
-        default: ''
-      rpe_1_10:
-        description: 'RPE po treningu (1-10)'
         required: false
         default: ''
       doms_info:
@@ -29,12 +20,12 @@ on:
         required: false
         default: ''
       trigger_replan:
-        description: 'Czy od razu przeliczyć plan AI Coach? (true/false)'
+        description: 'Tryb replanu AI Coach (auto / force / false)'
         required: false
-        default: 'true'
+        default: 'auto'
 
 jobs:
-  log_and_adapt:
+  morning_collect:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repozytorium
@@ -43,23 +34,24 @@ jobs:
       - name: Konfiguracja Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Instalacja zależności
-        run: pip install garminconnect gspread google-auth requests
+        run: pip install garminconnect garth gspread google-auth requests
 
-      - name: Zapis raportu i adaptacja planu
+      - name: Poranny odczyt Wellness + Ankieta + Detekcja Anomalii
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
           GEMINI_LLM_API_KEY: ${{ secrets.GEMINI_LLM_API_KEY }}
-          REPORT_TYPE: ${{ github.event.inputs.report_type }}
+          JOIN_API_KEY: ${{ secrets.JOIN_API_KEY }}
+          JOIN_DEVICE_ID: ${{ secrets.JOIN_DEVICE_ID }}
+          REPORT_TYPE: 'Rano_CheckIn'
           ENERGY_1_5: ${{ github.event.inputs.energy_1_5 }}
-          RPE_1_10: ${{ github.event.inputs.rpe_1_10 }}
           DOMS_INFO: ${{ github.event.inputs.doms_info }}
           PAIN_INFO: ${{ github.event.inputs.pain_info }}
           USER_NOTE: ${{ github.event.inputs.user_note }}
           TRIGGER_REPLAN: ${{ github.event.inputs.trigger_replan }}
-        run: python log_subjective.py
+        run: python -m collector.morning

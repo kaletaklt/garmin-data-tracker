@@ -1,10 +1,11 @@
-import os
+"""Klient LLM i generator kroczącego planu 7-dniowego (TODO-05)."""
+import json
 import re
 import time
-import json
+
 import requests
 
-GEMINI_API_KEY = os.getenv("GEMINI_LLM_API_KEY")
+from common.config import GEMINI_API_KEY
 
 
 def clean_empty_values(data):
@@ -19,7 +20,7 @@ def get_dynamic_high_end_models():
     excluded = [
         "lite", "gemma", "tts", "image", "vision", "embedding",
         "transcribe", "robotics", "lyria", "banana", "computer-use",
-        "customtools", "clip", "nano", "antigravity", "deep-research", "omni"
+        "customtools", "clip", "nano", "antigravity", "deep-research", "omni",
     ]
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
     try:
@@ -74,9 +75,6 @@ def parse_json_response(raw_text):
     return json.loads(cleaned)
 
 
-# ==============================================================================
-# TODO-05: GENERATOR I ADAPTATOR KROCZĄCEGO PLANU 7-DNIOWEGO
-# ==============================================================================
 def ask_holistic_7day_coach(context_payload, horizon_days):
     if not GEMINI_API_KEY:
         raise ValueError("Brak klucza GEMINI_LLM_API_KEY!")
@@ -86,7 +84,7 @@ def ask_holistic_7day_coach(context_payload, horizon_days):
     prompt = f"""Jesteś elitarnym, holistycznym trenerem personalnym AI (bieganie długodystansowe, przygotowanie siłowe Gym A/B, gravel, basen) prowadzącym zawodnika długofalowo.
 
 ZADANIE (TODO-05 + TODO-06):
-1. Przeanalizuj raport wykonania ostatnich treningów (`audyt_wykonania_planu_TODO_06`), trendy HRV/RHR/Snu, wskaźniki CTL/ATL/ACWR, plan mezocykli z `Cele_i_Strategia` oraz grafik w Google Calendar.
+1. Przeanalizuj raport wykonania ostatnich treningów (`audyt_wykonania_planu_TODO_06`), trendy HRV/RHR/Snu, wskaźniki CTL/ATL/ACWR, plan mezocykli z `Cele_i_Strategia` oraz grafik w Google Calendar i kalendarzu Garmin.
 2. Zaplanuj lub zaadaptuj KROCZĄCY PLAN 7-DNIOWY dla następujących dat:
 {json.dumps(horizon_days, ensure_ascii=False)}
 
@@ -95,13 +93,13 @@ PEŁNY KONTEKST ZAWODNIKA (JSON):
 
 BEZWZGLĘDNE WYTYCZNE TRENERSKIE:
 1. STABILNOŚĆ PLANU VS ADAPTACJA:
-   - Jeśli na dany dzień w `obecnie_zaplanowane_7_dni` istnieje już trening i nie koliduje on z nowym wydarzeniem w Google Calendar, a regeneracja (HRV/Sen) oraz uwagi zawodnika są w normie -> ZACHOWAJ dotychczasową koncepcję i parametry tego dnia, aby nie zmieniać planu bez powodu.
-   - Jeśli jednak w Google Calendar pojawiła się kolizja (np. wpisana ręcznie siłownia `gym B` w piątek lub `gym A` w poniedziałek), spadło HRV lub wczoraj pominięto jednostkę -> ZAADAPTUJ rozkład dni w tygodniu!
+   - Jeśli na dany dzień w `obecnie_zaplanowane_7_dni` istnieje już trening i nie koliduje on z nowym wydarzeniem w kalendarzu, a regeneracja (HRV/Sen) oraz uwagi zawodnika są w normie -> ZACHOWAJ dotychczasową koncepcję i parametry tego dnia, aby nie zmieniać planu bez powodu.
+   - Jeśli jednak w kalendarzu pojawiła się kolizja (np. wpisana siłownia `Gym B` w piątek lub `Gym A` w poniedziałek), spadło HRV lub wczoraj pominięto jednostkę -> ZAADAPTUJ rozkład dni w tygodniu!
 2. BIEGI SPOKOJNE NA TĘTNO (BPM), AKCENTY NA TEMPO (MIN/KM):
    - Dla WSZYSTKICH biegów spokojnych (Easy Run, Bieg Tlenowy, Recovery, spokojny Long Run) oraz dla rozgrzewek (`warmup`) i schłodzeń (`cooldown`) ZAWSZE podawaj cel jako ZAKRES TĘTNA w formacie `XXX-YYYbpm` (np. `warmup, 1km, 115-132bpm`, `interval, 4km, 125-145bpm`, `cooldown, 1km, 115-132bpm`). NIGDY nie podawaj tempa min/km dla biegów spokojnych!
    - Wyłącznie dla biegów jakościowych (Tempo HM, Próg, Interwały VO2max, Przebieżki) podawaj w odcinkach głównych (`interval`) widełki tempa `M:SS-M:SS` (np. `interval, 2km, 4:10-4:20`).
 3. SZTYWNA SIŁOWNIA Z KALENDARZA I ZASADA MAX 3 DNI TRENINGOWYCH Z RZĘDU (NAJWAŻNIEJSZE!):
-   - Zawodnik sam wpisuje sobie do Google Calendar sesje siłowe (`gym A`, `gym B` - umówione z dziewczyną). Te dni masz podane w polu `sztywne_dni_silowni_z_kalendarza`. Są one NIENARUSZALNE – w te dni zawsze planuj tę siłownię (`steps: "REST"`), nigdy bieg.
+   - Zawodnik sam wpisuje sobie do kalendarza sesje siłowe (`Gym A`, `Gym B` - umówione z dziewczyną) lub inne treningi niebiegowe. Te dni masz podane w polu `sztywne_dni_silowni_z_kalendarza`. Są one NIENARUSZALNE – w te dni zawsze planuj tę siłownię (`steps: "REST"`), nigdy bieg.
    - NADRZĘDNA ZASADA WSZYSTKIEGO: NIGDY NIE PLANUJ WIĘCEJ NIŻ 3 DNI TRENINGOWE Z RZĘDU (wliczając w to bieganie, siłownię, rower i basen)!
    - Jeżeli wypadałby 4. dzień treningowy z rzędu (lub gdyby zaplanowanie biegu sprawiło, że kolejnego dnia sztywna siłownia z kalendarza stałaby się 4. dniem z rzędu), automatycznie wstaw w ten dzień pełny odpoczynek: `workout_name: "Dzień Regeneracji (Rest Day)"` oraz `steps: "REST"`.
 4. SKŁADNIA PARSERA GARMINA (DLA DNI BIEGOWYCH):
@@ -124,8 +122,8 @@ Zwróć odpowiedź WYŁĄCZNIE jako czysty obiekt JSON w formacie:
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "responseMimeType": "application/json",
-            "temperature": 0.2
-        }
+            "temperature": 0.2,
+        },
     }
 
     active_models = get_dynamic_high_end_models()

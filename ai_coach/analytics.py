@@ -1,3 +1,4 @@
+"""Analityka fizjologiczna (CTL, ATL, TSB, ACWR, baza 60d HRV/RHR/Snu) oraz odczyt zakładki Cele_i_Strategia."""
 import datetime
 
 
@@ -31,11 +32,9 @@ def read_goals_and_strategy(sh):
         col0 = r[0].strip()
         col0_up = col0.upper()
 
-        # Pomijamy wiersze nagłówkowe
         if col0_up in ["MEZOCYKL / FAZA", "TYP_WPISU"]:
             continue
 
-        # 1. Wiersze tabeli Mezocykli
         if col0_up.startswith("MEZOCYKL") or col0_up.startswith("BLOK SPECJALNY"):
             mesocycles.append({
                 "faza": col0,
@@ -44,11 +43,10 @@ def read_goals_and_strategy(sh):
                 "cel": r[3].strip() if len(r) > 3 else "",
                 "objetosc_km": r[4].strip() if len(r) > 4 else "",
                 "uklad_tygodnia": r[5].strip() if len(r) > 5 else "",
-                "kluczowe_jednostki": r[6].strip() if len(r) > 6 else ""
+                "kluczowe_jednostki": r[6].strip() if len(r) > 6 else "",
             })
             continue
 
-        # 2. Wiersze tabeli Konfiguracji / Startów / Urlopów / Reguł
         name = r[1].strip() if len(r) > 1 else ""
         val_or_date = r[2].strip() if len(r) > 2 else ""
         dist = r[3].strip() if len(r) > 3 else ""
@@ -58,7 +56,7 @@ def read_goals_and_strategy(sh):
         if col0_up == "KONFIGURACJA":
             config[name] = {
                 "wartosc": val_or_date,
-                "szczegoly": f"{dist} | {goal} | {notes}".strip(" |")
+                "szczegoly": f"{dist} | {goal} | {notes}".strip(" |"),
             }
         elif "START" in col0_up:
             days_left = None
@@ -76,21 +74,21 @@ def read_goals_and_strategy(sh):
                     "dni_do_startu": days_left,
                     "dystans": dist,
                     "cel": goal,
-                    "uwagi": notes
+                    "uwagi": notes,
                 })
         elif any(k in col0_up for k in ["URLOP", "WYJAZD", "NIEDOSTEPNOSC", "PRZERWA"]):
             vacations_and_blocks.append({
                 "typ": col0_up,
                 "nazwa": name,
                 "okres": val_or_date,
-                "szczegoly": f"{dist} | {goal} | {notes}".strip(" |")
+                "szczegoly": f"{dist} | {goal} | {notes}".strip(" |"),
             })
         else:
             training_rules.append({
                 "kategoria": col0_up,
                 "klucz": name,
                 "wartosc": val_or_date,
-                "szczegoly": f"{dist} | {goal} | {notes}".strip(" |")
+                "szczegoly": f"{dist} | {goal} | {notes}".strip(" |"),
             })
 
     return config, races, vacations_and_blocks, training_rules, mesocycles
@@ -121,13 +119,19 @@ def analyze_full_history(wellness_sheet, activities_sheet):
         slp = safe_float(d_dict.get("Sen_Wynik"))
 
         if 0 <= days_ago <= 60:
-            if rhr: rhr_60.append(rhr)
-            if hrv: hrv_60.append(hrv)
-            if slp: sleep_60.append(slp)
+            if rhr:
+                rhr_60.append(rhr)
+            if hrv:
+                hrv_60.append(hrv)
+            if slp:
+                sleep_60.append(slp)
         if 0 <= days_ago <= 7:
-            if rhr: rhr_7.append(rhr)
-            if hrv: hrv_7.append(hrv)
-            if slp: sleep_7.append(slp)
+            if rhr:
+                rhr_7.append(rhr)
+            if hrv:
+                hrv_7.append(hrv)
+            if slp:
+                sleep_7.append(slp)
 
     for row in w_rows[-7:]:
         padded = row[:24] + [""] * max(0, 24 - len(row))
@@ -212,7 +216,7 @@ def analyze_full_history(wellness_sheet, activities_sheet):
         "ATL_Zmeczenie_Ostre_7d": round(atl, 1),
         "TSB_Bilans_Swiezosci": round(tsb, 1),
         "ACWR_Wskaznik_Ryzyka_Kontuzji": acwr,
-        "Objetosc_Ostatnie_8_Tygodni": sorted_weeks
+        "Objetosc_Ostatnie_8_Tygodni": sorted_weeks,
     }
 
     return wellness_summary, recent_wellness, load_metrics, recent_activities, activities_by_date

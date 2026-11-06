@@ -1,0 +1,36 @@
+name: AI Coach - Planowanie i Publikacja do Garmin
+
+on:
+  workflow_dispatch:
+    inputs:
+      user_notes:
+        description: 'Uwagi dla AI Coacha'
+        required: false
+        default: 'Samopoczucie w normie, brak dolegliwości.'
+
+jobs:
+  coach:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repozytorium
+        uses: actions/checkout@v4
+
+      - name: Konfiguracja Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalacja zależności
+        run: pip install garminconnect garth gspread google-auth requests
+
+      - name: AI Coach - Analiza, Plan 7-dniowy i Zapis do Garmin Connect
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GSPREAD_CREDENTIALS: ${{ secrets.GSPREAD_CREDENTIALS }}
+          GEMINI_LLM_API_KEY: ${{ secrets.GEMINI_LLM_API_KEY }}
+          JOIN_API_KEY: ${{ secrets.JOIN_API_KEY }}
+          JOIN_DEVICE_ID: ${{ secrets.JOIN_DEVICE_ID }}
+          USER_NOTES: ${{ github.event.inputs.user_notes }}
+        run: python -m ai_coach.main

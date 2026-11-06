@@ -1,13 +1,16 @@
-import os
+"""Pobieranie ostatnich aktywności z Garmin Connect do zakładki Aktywnosci."""
 import datetime
-from garmin_auth import GarminAuthenticator
-from gsheets_updater import GSheetsUpdater
+
+from common.config import SHEET_ACTIVITIES
+from common.garmin_auth import GarminAuthenticator
+from common.sheets import GSheetsUpdater
 
 NON_DISTANCE_TYPES = {
-    "strength_training", "yoga", "pilates", "meditation", 
+    "strength_training", "yoga", "pilates", "meditation",
     "breathwork", "stretching", "indoor_cardio", "fitness_equipment",
     "elliptical", "stair_climbing", "indoor_cycling", "treadmill_running"
 }
+
 
 class ActivityCollector:
     def __init__(self, garmin_client):
@@ -71,37 +74,29 @@ class ActivityCollector:
             avg_power,
             norm_power,
             vo2_max,
-            avg_temp
+            avg_temp,
         ]
 
 
-def main():
-    garmin_client = GarminAuthenticator().login()
-    collector = ActivityCollector(garmin_client)
+def collect_recent_activities(garmin_client=None, spreadsheet=None, days_back=7, limit=20):
+    """Pobiera i zapisuje w zakładce Aktywnosci aktywności z ostatnich `days_back` dni. Zwraca listę zapisanych wierszy."""
+    client = garmin_client or GarminAuthenticator().login()
+    collector = ActivityCollector(client)
+    updater = GSheetsUpdater(sheet_name=SHEET_ACTIVITIES, spreadsheet=spreadsheet)
 
-    sheet_id = os.getenv("GOOGLE_SHEET_ID")
-    if not sheet_id:
-        raise ValueError("Brak klucza GOOGLE_SHEET_ID w zmiennych środowiskowych.")
-
-    updater = GSheetsUpdater(spreadsheet_id=sheet_id, sheet_name="Aktywnosci")
-
-    # Codzienna synchronizacja sprawdza tylko ostatnie 7 dni
-    cutoff_date = datetime.date.today() - datetime.timedelta(days=7)
-    activities = collector.fetch_recent_activities(limit=20)
-
+    cutoff_date = datetime.date.today() - datetime.timedelta(days=days_back)
+    activities = collector.fetch_recent_activities(limit=limit)
     if not activities:
         print("Brak aktywności do przetworzenia.")
-        return
+        return []
 
-    print(f"Weryfikacja aktywności z ostatnich 7 dni (od {cutoff_date})...")
-
+    print(f"Weryfikacja aktywności z ostatnich {days_back} dni (od {cutoff_date})...")
+    saved_rows = []
     for activity in reversed(activities):
         activity_id = str(activity.get("activityId", ""))
         start_date_str = activity.get("startTimeLocal", "")[:10]
-
         if not activity_id or not start_date_str:
             continue
-
         try:
             act_date = datetime.datetime.strptime(start_date_str, "%Y-%m-%d").date()
             if act_date < cutoff_date:
@@ -111,8 +106,15 @@ def main():
 
         row = collector.extract_activity_data(activity)
         updater.upsert_row(identifier=activity_id, col_index=1, row_data=row)
+        saved_rows.append(row)
 
     print("Zakończono pomyślnie synchronizację aktywności z Google Sheets.")
+    return saved_rows
+
+
+def main():
+    collect_recent_activities()
+
 
 if __name__ == "__main__":
     main()

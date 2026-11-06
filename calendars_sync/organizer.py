@@ -1,13 +1,12 @@
-import os
-import re
-import json
+"""Automatyczna segregacja, dodawanie ikon emoji oraz kolorowanie wydarzeń w Google Calendar."""
 import datetime
-import requests
-from google.oauth2 import service_account
-from google.auth.transport.requests import Request
+import json
+import re
 
-GEMINI_API_KEY = os.getenv("GEMINI_LLM_API_KEY")
-CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", os.getenv("GARMIN_EMAIL", ""))
+import requests
+
+from common.config import AI_COACH_TAG, GEMINI_API_KEY, GOOGLE_CALENDAR_ID
+from common.google_auth import calendar_events_url, calendar_headers
 
 # Mapowanie kategorii na Twoją paletę kolorów (Google Calendar Event colorId 1-11) oraz ikony
 CATEGORY_STYLE = {
@@ -29,30 +28,13 @@ CATEGORY_STYLE = {
     "INNE":         {"colorId": "3",  "icon": "📌"},  # Ciemny fiolet (Winogrono / Grape)
 }
 
-
 KNOWN_ICONS = {v["icon"] for v in CATEGORY_STYLE.values()} | {"🧘", "🔥", "⚽"}
-
-
-def get_calendar_headers():
-    creds_json = os.getenv("GSPREAD_CREDENTIALS")
-    if not creds_json:
-        raise ValueError("Brak zmiennej GSPREAD_CREDENTIALS")
-    creds_dict = json.loads(creds_json)
-    creds = service_account.Credentials.from_service_account_info(
-        creds_dict, scopes=["https://www.googleapis.com/auth/calendar"]
-    )
-    creds.refresh(Request())
-    return {
-        "Authorization": f"Bearer {creds.token}",
-        "Content-Type": "application/json"
-    }
 
 
 def rule_based_category(summary, is_self_organizer, my_status, transparency):
     """Szybka kategoryzacja na podstawie słów kluczowych i statusu uczestnictwa."""
     s_low = summary.lower()
 
-    # Cudze wydarzenia ze statusem 'tentative' (Może) lub 'transparent' -> Informacyjne (Grafit)
     if not is_self_organizer and my_status != "accepted":
         return "INFORMACYJNE"
     if any(k in s_low for k in ["terapia", "mecz", "info:", "informacyjnie"]):
@@ -100,7 +82,7 @@ Zwróć wyłącznie obiekt JSON w formacie:
 
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1}
+        "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1},
     }
 
     for model in ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.5-flash"]:
@@ -120,22 +102,23 @@ def has_category_icon(title):
     return any(title.strip().startswith(ic) for ic in KNOWN_ICONS)
 
 
-def main():
-    if not CALENDAR_ID or "@" not in CALENDAR_ID:
+def organize_google_calendar(calendar_id=None):
+    cal_id = calendar_id or GOOGLE_CALENDAR_ID
+    if not cal_id or "@" not in cal_id:
         raise ValueError("Brak poprawnego adresu GOOGLE_CALENDAR_ID / GARMIN_EMAIL.")
 
-    headers = get_calendar_headers()
+    headers = calendar_headers()
     now = datetime.datetime.now(datetime.timezone.utc)
     time_min = (now - datetime.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
     time_max = (now + datetime.timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    base_url = f"https://www.googleapis.com/calendar/v3/calendars/{requests.utils.quote(CALENDAR_ID)}/events"
+    base_url = calendar_events_url(cal_id)
     params = {
         "timeMin": time_min,
         "timeMax": time_max,
         "singleEvents": True,
         "orderBy": "startTime",
-        "maxResults": 150
+        "maxResults": 150,
     }
 
     print("Pobieranie wydarzeń z Google Calendar do segregacji...")
@@ -149,12 +132,11 @@ def main():
     for ev in items:
         ev_id = ev.get("id")
         summary = ev.get("summary", "").strip()
-        if not summary or "[AI Coach]" in summary:
+        if not summary or AI_COACH_TAG in summary:
             continue
 
         is_self_organizer = ev.get("organizer", {}).get("self", False)
         if not is_self_organizer:
-            # Nie modyfikujemy tytułów cudzych wydarzeń, na które jesteśmy tylko zaproszeni
             continue
 
         attendees = ev.get("attendees", [])
@@ -182,7 +164,7 @@ def main():
                 planned_updates[ev_id] = {
                     "event": ev_obj,
                     "category": ai_results[ev_id]["category"],
-                    "clean_title": ai_results[ev_id].get("clean_title", item["title"])
+                    "clean_title": ai_results[ev_id].get("clean_title", item["title"]),
                 }
 
     updated_count = 0
@@ -196,7 +178,6 @@ def main():
         current_title = ev.get("summary", "").strip()
         clean_title = info["clean_title"].strip()
 
-        # Dodajemy ikonę na początku tytułu, jeśli jeszcze jej nie ma
         if not has_category_icon(current_title):
             new_title = f"{target_icon} {clean_title}"
         else:
@@ -211,6 +192,10 @@ def main():
                 print(f"Zaktualizowano: '{current_title}' -> '{new_title}' (Kategoria: {cat}, Kolor: {target_color})")
 
     print(f"Zakończono porządkowanie kalendarza. Zaktualizowano wydarzeń: {updated_count}.")
+
+
+def main():
+    organize_google_calendar()
 
 
 if __name__ == "__main__":

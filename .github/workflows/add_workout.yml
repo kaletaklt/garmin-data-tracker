@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       workout_code:
-        description: 'Kod treningu (Linia 1: Data, Linia 2: Nazwa, Linie 3+: Trening)'
+        description: 'Kod treningu (Linia 1: YYYY-MM-DD Nazwa, Linie 2+: kroki treningu)'
         required: true
         type: string
 
@@ -12,16 +12,16 @@ jobs:
   run-script:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
       - name: Install dependencies
-        run: pip install garminconnect
+        run: pip install garminconnect garth
       - name: Run script
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           WORKOUT_CODE: ${{ github.event.inputs.workout_code }}
-        run: python add_workout.py
+        run: python -m ai_coach.tools.add_workout

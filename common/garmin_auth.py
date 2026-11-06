@@ -1,20 +1,23 @@
+"""Logowanie do Garmin Connect z cache tokenów (unika blokady 429 IP Rate Limit)."""
 import os
-import sys
+
 from garminconnect import Garmin
+
+from common.config import GARMIN_EMAIL, GARMIN_PASSWORD
 
 TOKEN_DIR = "/tmp/garmin_tokens"
 
 
 class GarminAuthenticator:
     def __init__(self):
-        self.email = os.getenv("GARMIN_EMAIL")
-        self.password = os.getenv("GARMIN_PASSWORD")
+        self.email = GARMIN_EMAIL
+        self.password = GARMIN_PASSWORD
         self.client = None
 
     def login(self):
-        """Loguje użytkownika i zapisuje token sesji w /tmp, aby uniknąć blokady 429 IP Rate Limit."""
+        """Loguje użytkownika i zapisuje token sesji w /tmp. Rzuca RuntimeError przy niepowodzeniu."""
         if not self.email or not self.password:
-            raise ValueError("Brak danych logowania. Skonfiguruj GARMIN_EMAIL i GARMIN_PASSWORD.")
+            raise RuntimeError("Brak danych logowania. Skonfiguruj GARMIN_EMAIL i GARMIN_PASSWORD.")
 
         try:
             if os.path.exists(TOKEN_DIR):
@@ -37,5 +40,4 @@ class GarminAuthenticator:
             print("Pomyślnie zalogowano.")
             return self.client
         except Exception as e:
-            print(f"Błąd uwierzytelniania Garmin API: {e}")
-            sys.exit(1)
+            raise RuntimeError(f"Błąd uwierzytelniania Garmin API: {e}") from e
