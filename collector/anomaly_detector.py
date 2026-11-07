@@ -7,7 +7,11 @@ import datetime
 from common.config import ACTIVITY_COLS, SHEET_ACTIVITIES, SHEET_TRAININGS, SHEET_WELLNESS, WELLNESS_COLS
 from common.workout_parser import is_rest_code, planned_distance_km
 
-NEUTRAL_VALUES = {"", "brak", "nie", "0", "ok", "norma", "brak dolegliwości", "brak dolegliwosci"}
+NEUTRAL_VALUES = {
+    "", "brak", "nie", "0", "ok", "norma",
+    "brak dolegliwości", "brak dolegliwosci",
+    "wszystko świeże", "wszystko swieze"
+}
 DEFAULT_NOTES = {
     "",
     "brak",
